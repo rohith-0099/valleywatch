@@ -29,6 +29,10 @@ IIT Mandi), Track B: Mapping Flood Damage from Space.
 - Python 3.12
 - Node.js 20 or newer (dashboard)
 - A free Copernicus Data Space account: https://dataspace.copernicus.eu
+- A Groq API key (copilot and report summary): https://console.groq.com
+- About 2 GB of free disk for the installation, plus 50 to 130 MB per small
+  box analysed (1.5 GB for an 1,800 km2 box)
+- `google-chrome` only if you want to rebuild the report PDF
 
 ## Setup
 
@@ -60,7 +64,8 @@ Add `--thorough` to also use a second radar track that looks from the
 opposite side (fills radar blind zones, three more downloads).
 
 Boxes up to 400 km2 are fetched by direct download and finish in about six
-minutes. Larger boxes need `--large` and use slow batch jobs (about 25
+to nine minutes the first time, depending on how busy the Copernicus and
+ohsome servers are. Larger boxes need `--large` and use slow batch jobs (about 25
 minutes for 1,800 km2 the first time). Downloads are cached in `data/`, so a
 repeated run takes about a minute and costs no quota.
 
@@ -89,6 +94,14 @@ finishes, the right panel offers the one-page situation report (English or
 Nepali, printable) and the copilot chat. Finished runs
 can be reopened from the "Earlier runs" list. The base map is for display
 only; the analysis uses the pre-event OpenStreetMap snapshot.
+
+## Report
+
+`docs/REPORT.md` is the written report; `docs/REPORT.pdf` is built from it:
+
+```bash
+cd docs && ../.venv/bin/python build_report.py
+```
 
 ## Validation (reference maps, checking only)
 

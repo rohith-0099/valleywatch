@@ -47,10 +47,13 @@ def _ask_groq(messages, use_tools=True):
     for attempt in range(1, 6):
         response = requests.post(GROQ_URL, json=body, timeout=120,
                                  headers={"Authorization": f"Bearer {key}"})
-        # The free tier allows few tokens per minute; wait and try again.
-        if response.status_code != 429 or attempt == 5:
+        # 429: the free tier allows few tokens per minute; wait and try again.
+        # 400 "tool_use_failed": the model wrote a malformed function call;
+        # asking again usually gives a valid one.
+        malformed_call = response.status_code == 400 and "tool_use_failed" in response.text
+        if not (response.status_code == 429 or malformed_call) or attempt == 5:
             break
-        time.sleep(8 * attempt)
+        time.sleep(8 * attempt if response.status_code == 429 else 1)
     if not response.ok:
         raise RuntimeError(f"Language model error {response.status_code}: {response.text[:300]}")
     return response.json()["choices"][0]["message"]

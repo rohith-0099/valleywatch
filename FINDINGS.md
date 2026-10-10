@@ -782,3 +782,38 @@ Service data.
 
 Nothing regressed; differences are in the third decimal. EMSR927 has now
 been measured five times in total and never used to set a parameter.
+
+## Clean-machine test (11 Oct)
+
+A fresh clone, following the README as written.
+
+- Worked as written: virtualenv, `pip install -r backend/requirements.txt`,
+  `.env`, the tests, `npm install`, `npm run dev`, `uvicorn api:app`, a cold
+  pipeline run of a small box, the report page, the flood-path endpoint, and
+  the `--help` of the validation and scan commands.
+- The EMSR927 download was not repeated in the clone (disk space).
+- **Bug found: the copilot failed** on its first question in the clone with
+  `400 tool_use_failed ... /limit: expected integer, but got null`. The
+  model had sent `"limit": null` for an optional argument and the service
+  rejected the call. It had worked in earlier tests by luck. Fixed: optional
+  arguments may be null, null means "use the default", and a malformed call
+  is retried.
+- **Second bug found while fixing it:** with `"level": null` the row
+  placeholders were named `cut_off_None_1`. The capital letter did not match
+  the placeholder pattern, so they were neither filled nor reported: the
+  answer was shown as "verified" with raw `{cut_off_None_1}` in it. Fixed:
+  the name comes from the level actually used, and anything in curly braces
+  that is not a known placeholder now rejects the text.
+- **The machine ran out of disk during the test** (1.3 GB free of 147 GB).
+  A full copy needs about 1.7 GB (virtualenv 1.0 GB, node_modules 0.6 GB)
+  plus downloads: 50 to 130 MB per small box, 1.5 GB for the full box. The
+  test was finished with the clone sharing the existing virtualenv. On a
+  demo machine, check free space first.
+- **ohsome was slow in this run:** the wider routing area took 4 minutes to
+  arrive (2,074 roads), so the cold run took 8.5 minutes although the flood
+  map was ready after 3 min 41 s. In earlier runs the same request took
+  under a minute. The flood map is shown first, so the user sees a result
+  early, but damage and cut-off wait for ohsome.
+- Turbopack (the Next.js dev bundler) refuses a symlinked `node_modules`.
+  Only relevant if someone tries to share one between copies, as this test
+  first did.

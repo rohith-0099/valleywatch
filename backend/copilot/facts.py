@@ -235,17 +235,36 @@ TOOLS = [
 
 
 def tool_schemas():
-    return [{"type": "function", "function": {
-        "name": t["name"], "description": t["description"],
-        "parameters": {"type": "object", "properties": t["parameters"],
-                       "required": t.get("required", [])}}} for t in TOOLS]
+    """Tool list in the form the model API expects.
+
+    Optional arguments may also be null: the model sometimes sends
+    `"limit": null` for "no preference", and a strict schema would make the
+    service reject the whole request.
+    """
+    schemas = []
+    for tool in TOOLS:
+        required = tool.get("required", [])
+        properties = {}
+        for name, spec in tool["parameters"].items():
+            spec = dict(spec)
+            if name not in required:
+                spec["type"] = [spec["type"], "null"]
+                if "enum" in spec:
+                    spec["enum"] = spec["enum"] + [None]
+            properties[name] = spec
+        schemas.append({"type": "function", "function": {
+            "name": tool["name"], "description": tool["description"],
+            "parameters": {"type": "object", "properties": properties, "required": required}}})
+    return schemas
 
 
 def call_tool(facts, name, arguments):
     """Run one function by name. Unknown names and bad arguments return an error text."""
     if name not in {t["name"] for t in TOOLS}:
         return {"error": f"There is no function called {name}."}
+    # A null argument means "use the default".
+    arguments = {key: value for key, value in (arguments or {}).items() if value is not None}
     try:
-        return getattr(facts, name)(**(arguments or {}))
+        return getattr(facts, name)(**arguments)
     except (TypeError, ValueError) as error:
         return {"error": f"Bad arguments for {name}: {error}"}

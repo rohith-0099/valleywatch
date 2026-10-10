@@ -12,7 +12,9 @@ and its numbers cannot be mixed up between rows.
 """
 import re
 
-PLACEHOLDER = re.compile(r"\{([a-z0-9_]+)\}")
+# Anything in single curly braces counts, so a misspelt placeholder is caught
+# as "unknown" instead of slipping through as plain text.
+PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_.:-]+)\}")
 
 ROW_TEXT = {
     "en": {
@@ -111,7 +113,8 @@ def to_slots(function, arguments, result, language):
 
     rows_key, kind, prefix = LISTS.get(function, (None, None, None))
     if function == "list_cut_off_settlements":
-        prefix = f"{prefix}_{arguments.get('level', 'vehicle')}"
+        # The level actually used comes back in the result ("vehicle" or "any").
+        prefix = f"{prefix}_{result.get('level', 'vehicle')}"
 
     for key, value in result.items():
         if key == rows_key:

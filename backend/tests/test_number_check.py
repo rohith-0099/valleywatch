@@ -29,8 +29,28 @@ def test_unknown_placeholder_is_reported():
 
 
 def test_rows_keep_name_and_number_together():
-    result = {"settlements": [{"name": "A", "buildings": 706, "km_to_town_before_flood": 9.13},
+    result = {"level": "any",
+              "settlements": [{"name": "A", "buildings": 706, "km_to_town_before_flood": 9.13},
                               {"name": "B", "buildings": 12, "km_to_town_before_flood": None}]}
     _, registry = to_slots("list_cut_off_settlements", {"level": "any"}, result, "en")
     assert registry["cut_off_any_1"] == "A: 706 buildings; town was 9.13 km away by road"
     assert "B: 12 buildings" in registry["cut_off_any_2"]
+
+
+def test_null_arguments_fall_back_to_defaults():
+    from copilot.facts import call_tool, tool_schemas
+
+    class Facts:
+        def list_hit_bridges(self, limit=10):
+            return {"limit_used": limit}
+
+    assert call_tool(Facts(), "list_hit_bridges", {"limit": None}) == {"limit_used": 10}
+    limit = next(t for t in tool_schemas() if t["function"]["name"] == "list_hit_bridges")
+    assert "null" in limit["function"]["parameters"]["properties"]["limit"]["type"]
+
+
+def test_misspelt_placeholder_is_caught_and_level_comes_from_the_result():
+    assert fill("{Cut_Off_None_1}", {})[1] == ["Cut_Off_None_1"]
+    result = {"level": "vehicle", "settlements": [{"name": "A", "buildings": 3}]}
+    _, registry = to_slots("list_cut_off_settlements", {"level": None}, result, "en")
+    assert "cut_off_vehicle_1" in registry
