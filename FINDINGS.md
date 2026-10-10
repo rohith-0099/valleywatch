@@ -257,3 +257,39 @@ be normal change.
   added as seeds; small box now 0.040 km2 water and 0.220 km2 debris.
 - Limitation: detections UPSTREAM of the uppermost confident patch on a
   river are dropped, since the path is only traced downstream.
+
+## Bridges
+
+- First rule: a bridge was hit if a hazard polygon came within 15 m of either
+  end. On a flooded river that is true for nearly every bridge, because the
+  ends sit on the banks. It flagged 7 of 16 bridges in the small box, in
+  effect "flagged because it crosses the river".
+- New rule: only the bank counts. The deck line is extended 10 m past each
+  end, onto land, and the bridge is hit only if a hazard polygon covers that
+  point (both ends = high, one end = medium). Change under the span is never
+  used. A bridge over a changed river with both banks unaffected is reported
+  as "exposed", not hit.
+- Small box: 3 of 16 hit. Full box: 31 of 217 hit, 4 exposed, 182 clear.
+- Limitation: at 10 m pixels a 10 m offset is one pixel. A bridgehead can be
+  missed or wrongly included by a one-pixel error.
+
+## Cut-off analysis (not validated)
+
+- Small box: 17 settlements, none cut off, 1 long detour to the hospital.
+  No town lies inside the small box, so the test was for a route to a main
+  road leaving the box.
+- Full box: 182 settlements, 14 cut off (4,037 buildings), 63 with a long
+  detour to the town, 6 cut off from every hospital. Runtime 59 s for
+  107,135 buildings and 220,000 road edges.
+- Only ONE town is mapped inside the full box, so "nearest town" means that
+  town for every settlement. Distances of 56 km appear for border villages.
+- 29 settlements had no route to the town even before the flood, and 4 are
+  further than 500 m from any mapped road. This is incomplete OpenStreetMap
+  data (disconnected trails), not flood damage; they are reported
+  separately and never counted as cut off.
+- All road types count as a connection, including footpaths. A village may
+  be "connected" by a trail no vehicle can use.
+- Roads outside the box are unknown. A settlement near the edge whose real
+  route leaves the box may be wrongly reported.
+- One settlement in the list is across the border in China. The box is the
+  only input, so the system does not filter by country.

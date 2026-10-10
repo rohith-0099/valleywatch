@@ -122,5 +122,15 @@ class Settings:
     # this far along the bridge line onto the bank.
     bridge_approach_m: float = 10.0
 
+    # --- Cut-off analysis ---
+    # A place further than this from any mapped road is "not on the network".
+    max_snap_distance_m: float = 500.0
+    # Buildings within this distance are counted towards a settlement.
+    settlement_radius_m: float = 1000.0
+    # A surviving route counts as a long detour when it is both this many
+    # times longer and this many kilometres longer than before.
+    detour_factor: float = 1.5
+    detour_min_extra_km: float = 2.0
+
     # --- Clean-up ---
     min_patch_m2: float = 1000.0     # 10 pixels; smaller patches are speckle

@@ -12,6 +12,8 @@ shapely
 pyproj
 # River network and height above drainage from the DEM
 pysheds
+# Road graph and routing for the cut-off analysis
+networkx
 # Quick-look images
 matplotlib
 # Config and tests

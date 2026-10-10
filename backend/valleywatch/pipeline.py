@@ -14,6 +14,7 @@ from rasterio.warp import Resampling, reproject
 from . import fetch
 from .config import Settings
 from .corridor import river_corridor
+from .cutoff import analyse_cutoff
 from .damage import assess_damage
 from .flood_mask import CLASS_DEBRIS, CLASS_WATER, detect_flood_and_debris
 from .optical import combine_radar_and_optical, optical_evidence
@@ -241,20 +242,25 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     return summary
 
 
-def run_damage_overlay(bbox, flood_date, settings=None, data_dir=None, output_dir=None,
+def run_damage_and_cutoff(bbox, flood_date, settings=None, data_dir=None, output_dir=None,
                        progress=print):
-    """Step 4: overlay pre-event OpenStreetMap on the flood map of this run."""
+    """Steps 4 and 5: damage overlay and cut-off settlements for this run."""
     settings = settings or Settings()
     name = _run_name(bbox, flood_date)
     data_dir = Path(data_dir or REPO_ROOT / "data" / name)
     output_dir = Path(output_dir or REPO_ROOT / "outputs" / name)
 
     progress("Checking roads and buildings")
+    output_dir.mkdir(parents=True, exist_ok=True)
     layers, snapshot = fetch_osm_layers(bbox, flood_date, data_dir, progress)
     hazards = gpd.read_file(output_dir / "flood_debris.geojson")
     damage = assess_damage(hazards, layers, fetch.utm_epsg_for(bbox), settings)
     for layer in ("buildings_hit", "road_hits", "bridges"):
-        damage[layer].to_file(output_dir / f"{layer}.geojson", driver="GeoJSON")
+        path = output_dir / f"{layer}.geojson"
+        if len(damage[layer]):
+            damage[layer].to_file(path, driver="GeoJSON")
+        else:
+            path.write_text(json.dumps({"type": "FeatureCollection", "features": []}))
 
     # Add the damage figures to the run summary written by the flood step.
     summary_path = output_dir / "summary.json"
@@ -264,15 +270,27 @@ def run_damage_overlay(bbox, flood_date, settings=None, data_dir=None, output_di
     summary["damage"] = damage["totals"]
     if "© OpenStreetMap contributors." not in summary["attribution"]:
         summary["attribution"].append("© OpenStreetMap contributors.")
+
+    # ---- Step 5: cut-off settlements ----------------------------------------
+    progress("Finding cut-off settlements")
+    cutoff = analyse_cutoff(layers, damage["road_hits"], damage["bridges"], bbox,
+                            fetch.utm_epsg_for(bbox), settings)
+    for layer in ("settlements", "broken_links", "lost_routes"):
+        path = output_dir / f"{layer}.geojson"
+        if len(cutoff[layer]):
+            cutoff[layer].to_file(path, driver="GeoJSON")
+        else:  # GeoJSON writers reject an empty table, so write the empty file by hand
+            path.write_text(json.dumps({"type": "FeatureCollection", "features": []}))
+    summary["cutoff"] = cutoff["totals"]
     summary_path.write_text(json.dumps(summary, indent=2))
-    print(json.dumps(damage["totals"], indent=2))
+    print(json.dumps({"damage": damage["totals"], "cutoff": cutoff["totals"]}, indent=2))
     return summary
 
 
 def run_analysis(bbox, flood_date, settings=None, progress=print):
     """Everything built so far, in order."""
     run_flood_mapping(bbox, flood_date, settings, progress=progress)
-    return run_damage_overlay(bbox, flood_date, settings, progress=progress)
+    return run_damage_and_cutoff(bbox, flood_date, settings, progress=progress)
 
 
 def main():
