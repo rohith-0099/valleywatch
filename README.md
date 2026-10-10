@@ -17,10 +17,12 @@ IIT Mandi), Track B: Mapping Flood Damage from Space.
 | 5. Cut-off settlement analysis | working |
 | 6. Copilot and situation report (English, Nepali) | working |
 | 7. Validation against EMSR927 | working (scores in FINDINGS.md) |
-| 8. Flood-path tracing | not started |
+| 8. Flood-path tracing (bonus) | working |
 | Dashboard (map, layers, totals, cut-off list, live progress) | working |
 | Dashboard report buttons and copilot chat | working |
-| Dashboard swipe slider, flood path | not started |
+| Dashboard flood-path animation | working |
+| Dashboard before/after swipe slider | not started |
+| Report draft (`docs/REPORT.md`) | draft |
 
 ## Prerequisites
 

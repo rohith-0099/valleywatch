@@ -744,3 +744,12 @@ found no vector product. So this is a diagnosis from our own outputs.
   removed from the road network. Chamoli now lists 2 exposed bridges.
 - Idea not built: a second cut-off scenario, "if the exposed bridges are
   also down", shown next to the main one and labelled as a what-if.
+
+## Flood-path tracing (bonus)
+
+- From a clicked point the path follows the DEM flow directions downhill to
+  the edge of the box; settlements within 500 m are listed in downstream
+  order. From Rasuwagadhi at the border: 65.5 km, 1,341 m of descent, 12
+  settlements, in 2.8 s.
+- It shows where water would run, not how far a flood would reach or how
+  deep. It stops at the box edge.
