@@ -16,9 +16,10 @@ from .config import Settings
 from .corridor import river_corridor
 from .damage import assess_damage
 from .flood_mask import CLASS_DEBRIS, CLASS_WATER, detect_flood_and_debris
-from .optical import fuse_with_optical, optical_evidence
+from .optical import combine_radar_and_optical, optical_evidence
 from .osm import fetch_osm_layers
 from .quicklook import save_quicklook
+from .refine import keep_flood_path, radar_only_areas, score_confidence
 from .scene_picker import list_sentinel2_scenes, pick_sentinel1_pair
 from .terrain import terrain_mask
 from .vectorize import masks_to_polygons
@@ -129,15 +130,26 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     # ---- Step 2c: terrain masks and river corridor from the DEM -----------
     report("Finding the river corridor and radar blind zones")
     terrain = terrain_mask(dem, pixel_m, pair["direction"], settings)
-    corridor = river_corridor(dem, grid["transform"], grid["crs"], settings)["corridor"]
+    corridor_info = river_corridor(dem, grid["transform"], grid["crs"], settings)
+    corridor = corridor_info["corridor"]
 
-    # ---- Step 2d: classify -------------------------------------------------
+    # ---- Step 2d: radar detection ------------------------------------------
     report("Detecting flood and debris")
     result = detect_flood_and_debris(before, after, terrain, corridor, pixel_m,
                                      settings, baseline=baseline)
-    radar_only = {
-        "water_km2": float((result["classes"] == CLASS_WATER).sum()) * pixel_m ** 2 / 1e6,
-        "debris_km2": float((result["classes"] == CLASS_DEBRIS).sum()) * pixel_m ** 2 / 1e6}
+
+    # Acceptance test: the same radar rules on the flood pair and on a pair
+    # with no flood. If the two give similar areas, the radar result is noise.
+    acceptance = None
+    if result["no_flood"] is not None:
+        quiet = result["no_flood"]
+        acceptance = {
+            "flood_pair": radar_only_areas(result["water"], result["debris_before_pruning"],
+                                           result["water_core"], corridor_info, pixel_m, settings),
+            "no_flood_pair": radar_only_areas(quiet["water"], quiet["debris"],
+                                              quiet["water_core"], corridor_info, pixel_m, settings),
+            "no_flood_pair_dates": [pair["baseline"]["date"], pair["before"]["date"]],
+        }
 
     # ---- Step 3: optical check where the sky was clear ---------------------
     if available("s2_before") and available("s2_after"):
@@ -145,14 +157,18 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
         bands = fetch.S2_BANDS
         s2_before = dict(zip(bands, _read_onto_grid(paths["s2_before"], grid)))
         s2_after = dict(zip(bands, _read_onto_grid(paths["s2_after"], grid)))
-        fuse_with_optical(result, optical_evidence(s2_before, s2_after, settings),
-                          pixel_m, settings)
+        combine_radar_and_optical(result, optical_evidence(s2_before, s2_after, settings),
+                                  pixel_m, settings)
     else:
         report("No usable optical images; result is from radar only")
-        result["source"] = (result["classes"] > 0).astype(np.uint8)
+        combine_radar_and_optical(result, None, pixel_m, settings)
         result["optical"] = {"used": False, "reason": "No Sentinel-2 composite available: "
                              + "; ".join(str(paths[k]) for k in ("s2_before", "s2_after")
                                          if not available(k))}
+
+    # ---- Keep the connected flood path, then score confidence --------------
+    keep_flood_path(result, corridor_info, pixel_m, settings)
+    score_confidence(result, settings)
 
     # ---- Outputs -------------------------------------------------------------
     report("Writing outputs")
@@ -175,12 +191,15 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
         "grid": {"crs": str(grid["crs"]), "pixel_m": pixel_m,
                  "width": grid["width"], "height": grid["height"]},
         "thresholds": result["thresholds"],
-        "baseline": result["baseline"],
+        "river_min_catchment_km2": corridor_info["river_min_catchment_km2"],
+        "acceptance_test": acceptance,
         "totals": {
             "water_km2": round(float((result["classes"] == CLASS_WATER).sum()) * pixel_km2, 3),
             "debris_km2": round(float((result["classes"] == CLASS_DEBRIS).sum()) * pixel_km2, 3),
-            "radar_only_water_km2": round(radar_only["water_km2"], 3),
-            "radar_only_debris_km2": round(radar_only["debris_km2"], 3),
+            "area_km2_by_source": {
+                label: round(float((result["source"] == code).sum()) * pixel_km2, 3)
+                for label, code in (("radar only", 1), ("radar and optical", 2),
+                                    ("optical only", 3), ("radar, optical disagrees", 4))},
             "water_polygons": int((polygons["hazard"] == "water").sum()),
             "debris_polygons": int((polygons["hazard"] == "debris").sum()),
             "polygons_by_confidence": polygons["confidence_level"].value_counts().to_dict(),
@@ -218,8 +237,7 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     save_quicklook(result, extent, output_dir / "quicklook.png", title)
 
     report(f"Finished. Outputs written to {output_dir}")
-    print(json.dumps({k: summary[k] for k in ("totals", "baseline")}, indent=2))
-    print(json.dumps(summary["sentinel2"]["check"], indent=2))
+    print(json.dumps({k: summary[k] for k in ("totals", "acceptance_test")}, indent=2))
     return summary
 
 

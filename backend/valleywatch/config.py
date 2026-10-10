@@ -52,15 +52,29 @@ class Settings:
     geometry_margin_deg: float = 5.0
 
     # --- River corridor (from the DEM only) ---
-    # A cell is "river" when at least this much land drains through it.
-    river_min_catchment_km2: float = 10.0
+    # Which cells count as "river". In "adaptive" mode the rule follows the
+    # box: a river is any stream draining at least `river_fraction_of_largest`
+    # of the biggest drainage area found inside the box (never less than
+    # `river_min_catchment_km2`). This works for a great river and a small
+    # one alike. "fixed" mode uses `river_fixed_catchment_km2` instead.
+    river_catchment_mode: str = "adaptive"
+    river_fraction_of_largest: float = 0.02
+    river_min_catchment_km2: float = 5.0
+    river_fixed_catchment_km2: float = 100.0
     # The corridor is all ground less than this height above the nearest
     # river cell. Flood water and debris travel along the valley floor, so
     # detections outside the corridor are treated as unrelated change.
-    corridor_max_hand_m: float = 40.0
+    corridor_max_hand_m: float = 20.0
     # Inside the corridor the slope limit is relaxed: in a gorge the 30 m DEM
     # blurs the river bed into the valley walls and makes it look steep.
     corridor_max_slope_deg: float = 45.0
+    # A flood runs downstream without gaps. Detections are kept only on
+    # river reaches downstream of a confident patch at least this large.
+    seed_min_area_m2: float = 5000.0
+    # Where radar is blind (gorges), optical alone may start a flood path,
+    # but only from a patch this large: small optical patches are often
+    # fields or leftover cloud shadow.
+    optical_seed_min_area_m2: float = 20000.0
 
     # --- Hysteresis ---
     # Pixels with a weaker change (this fraction of the threshold) are kept
@@ -72,20 +86,26 @@ class Settings:
     # patches must also show a VH rise.
     debris_large_patch_m2: float = 3000.0
 
-    # --- Pre-event baseline ---
-    # Confidence is multiplied by this where the ground was already changing
-    # between the two images taken before the flood.
-    baseline_confidence_factor: float = 0.5
-
     # --- Sentinel-2 check ---
+    s2_reflectance_scale: float = 10000.0  # stored value / scale = reflectance
     ndvi_vegetated: float = 0.4       # NDVI above this = vegetated
     ndvi_drop: float = 0.25           # NDVI fall that counts as vegetation loss
     ndvi_stable: float = 0.10         # NDVI fall below this = vegetation intact
+    ndvi_bare_max: float = 0.3        # after the event the pixel must be this bare
+    # Cloud and terrain shadow is dark in every band and fakes a loss of
+    # greenness. Real sediment is bright, so darker pixels are rejected.
+    shadow_max_reflectance: float = 0.08
     water_index_min: float = 0.0      # MNDWI above this = open water
-    optical_confirm_bonus: float = 0.25
-    optical_disagree_factor: float = 0.6
-    optical_only_confidence: float = 0.5
+    water_green_min: float = 0.06     # muddy flood water is bright in green
     optical_min_patch_m2: float = 3000.0
+
+    # --- Confidence by agreement of sources ---
+    score_radar_and_optical: float = 0.9   # high
+    score_optical_only: float = 0.6        # medium
+    score_radar_water_unchecked: float = 0.6  # medium: no clear optical view
+    score_radar_only: float = 0.3          # low
+    # Subtracted where the ground was already changing before the flood.
+    score_already_changing_penalty: float = 0.3
 
     # --- Live runs ---
     # Boxes up to this size are fetched by direct download (minutes). Larger

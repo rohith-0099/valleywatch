@@ -127,12 +127,15 @@ def classify_change(z, allowed, dark_before, pixel_m, settings):
 
 def detect_flood_and_debris(before, after, terrain, corridor, pixel_m, settings,
                             baseline=None):
-    """Classify every pixel as water, debris or neither.
+    """Radar detection of new water and debris.
 
     before / after / baseline: dicts with linear 'VV' and 'VH' arrays on one
     grid. `baseline` is an optional image taken one pass before `before`; it
     shows how much the area changes when there is no flood.
     terrain: output of terrain.terrain_mask. corridor: boolean river corridor.
+
+    Returns boolean 'water' and 'debris' masks plus everything later steps
+    need. Classes and confidence are assigned after the optical check.
     """
     before_db, after_db = filtered_db(before, settings), filtered_db(after, settings)
     has_data = np.isfinite(before_db["VV"]) & np.isfinite(after_db["VV"]) & \
@@ -148,54 +151,43 @@ def detect_flood_and_debris(before, after, terrain, corridor, pixel_m, settings,
 
     change, z, thresholds = scaled_change(before_db, after_db, usable, settings)
     dark_before = dark_like_water(before_db, settings)
-    water, debris, water_strength, debris_strength = classify_change(
+    water, debris, water_strength, _ = classify_change(
         z, allowed, dark_before, pixel_m, settings)
 
-    classes = np.zeros(water.shape, dtype=np.uint8)
-    classes[debris] = CLASS_DEBRIS
-    classes[water] = CLASS_WATER
-
-    # Confidence, 0 to 1: how far past the threshold the change is.
-    # A change exactly at threshold scores 0.33, three times threshold 1.0.
-    confidence = np.zeros(water.shape, dtype=np.float32)
-    confidence[water] = np.clip(water_strength[water] / 3.0, 0, 1)
-    # Debris is surer when VH rises too.
-    debris_score = debris_strength * np.where(z["VH"] > 1, 1.0, 0.7)
-    confidence[debris] = np.clip(debris_score[debris] / 3.0, 0, 1)
-
     result = {
-        "classes": classes, "confidence": confidence,
+        "water": water, "debris": debris,
+        # The confident heart of each water patch (at or past the threshold).
+        "water_core": water & (water_strength >= 1.0),
         "change_vv_db": change["VV"], "change_vh_db": change["VH"],
         "before_vv_db": before_db["VV"], "after_vv_db": after_db["VV"],
         "not_mapped": has_data & ~usable, "corridor": corridor,
         # Counted on mappable ground only: on steep ground "dark" is mostly
         # radar shadow, not water.
         "permanent_water": dark_before & usable,
-        "has_data": has_data, "thresholds": thresholds, "baseline": None,
+        "has_data": has_data, "thresholds": thresholds,
+        "already_changing": np.zeros(water.shape, dtype=bool), "no_flood": None,
     }
 
     if baseline is not None:
         # The same rules applied to two images from BEFORE the flood. Anything
-        # found here is normal change (rain, river level, farming), so:
-        # 1. its area tells us the false-alarm level to expect, and
-        # 2. ground that was already changing gets a lower confidence.
+        # found there is normal change (rain, river level, farming).
         baseline_db = filtered_db(baseline, settings)
         base_ok = usable & np.isfinite(baseline_db["VV"]) & np.isfinite(baseline_db["VH"])
         _, base_z, base_thresholds = scaled_change(baseline_db, before_db, base_ok, settings)
-        base_water, base_debris, _, _ = classify_change(
+        base_water, base_debris, base_strength, _ = classify_change(
             base_z, base_ok & corridor, dark_like_water(baseline_db, settings),
             pixel_m, settings)
-        already_changing = base_ok & ((np.abs(base_z["VV"]) > 1) | (np.abs(base_z["VH"]) > 1))
-        detected = classes > 0
-        confidence[detected & already_changing] *= settings.baseline_confidence_factor
-        pixel_km2 = pixel_m ** 2 / 1e6
-        result["baseline"] = {
-            "thresholds": base_thresholds,
-            "normal_change_water_km2": round(float(base_water.sum()) * pixel_km2, 3),
-            "normal_change_debris_km2": round(float(base_debris.sum()) * pixel_km2, 3),
-            "already_changing_percent_of_corridor": round(
-                100 * float((already_changing & corridor).sum()) / max(int(allowed.sum()), 1), 2),
-            "detections_down_weighted_km2": round(
-                float((detected & already_changing).sum()) * pixel_km2, 3),
-        }
+        low = settings.hysteresis_low_fraction
+        already_changing = base_ok & ((np.abs(base_z["VV"]) > low) | (np.abs(base_z["VH"]) > low))
+        result["already_changing"] = already_changing
+        result["no_flood"] = {"water": base_water, "debris": base_debris,
+                              "water_core": base_water & (base_strength >= 1.0),
+                              "thresholds": base_thresholds}
+        # Kept for the acceptance test, which compares like with like.
+        result["debris_before_pruning"] = debris.copy()
+        # A VV rise where VV was already swinging before the flood is not
+        # evidence of debris. Drop those pixels, then drop the crumbs left.
+        min_pixels = max(int(round(settings.min_patch_m2 / pixel_m ** 2)), 1)
+        result["debris"] = remove_small_objects(debris & ~already_changing,
+                                                max_size=min_pixels - 1)
     return result

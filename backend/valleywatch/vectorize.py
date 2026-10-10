@@ -12,7 +12,7 @@ CLASS_NAMES = {CLASS_WATER: "water", CLASS_DEBRIS: "debris"}
 
 
 def confidence_level(value):
-    if value >= 0.66:
+    if value >= 0.75:
         return "high"
     return "medium" if value >= 0.45 else "low"
 

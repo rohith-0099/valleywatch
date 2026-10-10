@@ -22,9 +22,12 @@ def _ratio(a, b):
 def optical_evidence(before, after, settings):
     """Per-pixel optical change between two cloud-free composites.
 
-    before / after: dicts of reflectance arrays 'B03' (green), 'B04' (red),
-    'B08' (near infrared) and 'B11' (short-wave infrared).
+    before / after: dicts of arrays 'B03' (green), 'B04' (red), 'B08' (near
+    infrared) and 'B11' (short-wave infrared).
     """
+    scale = settings.s2_reflectance_scale
+    before = {name: band / scale for name, band in before.items()}
+    after = {name: band / scale for name, band in after.items()}
     clear = np.ones(before["B04"].shape, dtype=bool)
     for image in (before, after):
         for band in image.values():
@@ -40,44 +43,59 @@ def optical_evidence(before, after, settings):
 
     ndvi_fall = ndvi_before - ndvi_after
     vegetated_before = ndvi_before >= settings.ndvi_vegetated
+    # Shadow test. A cloud or mountain shadow darkens every band and lowers
+    # NDVI just like lost vegetation. Fresh sediment is bright in the two
+    # infrared bands, so we require the after pixel to be bright there.
+    bright_after = ((after["B08"] >= settings.shadow_max_reflectance) &
+                    (after["B11"] >= settings.shadow_max_reflectance))
+    new_water = (clear & (mndwi_after > settings.water_index_min) &
+                 (mndwi_before <= settings.water_index_min) &
+                 (after["B03"] >= settings.water_green_min))
     return {
         "clear": clear,
-        # Green before, clearly less green after: stripped or buried.
-        "vegetation_loss": clear & vegetated_before & (ndvi_fall >= settings.ndvi_drop),
+        # Green before; afterwards bare (not merely less green) and not in
+        # shadow: stripped or buried by the flood.
+        "vegetation_loss": (clear & vegetated_before & bright_after &
+                            (ndvi_fall >= settings.ndvi_drop) &
+                            (ndvi_after <= settings.ndvi_bare_max)),
         # Green before and still green after: nothing happened here.
         "vegetation_intact": clear & vegetated_before & (ndvi_fall < settings.ndvi_stable),
-        # Water now, not water before.
-        "new_water": clear & (mndwi_after > settings.water_index_min) &
-                     (mndwi_before <= settings.water_index_min),
+        # Bright water now, not water before.
+        "new_water": new_water,
     }
 
 
-def fuse_with_optical(result, evidence, pixel_m, settings):
-    """Confirm, extend or down-weight the radar result with optical evidence.
+def combine_radar_and_optical(result, evidence, pixel_m, settings):
+    """Build the class map from radar, and from optical where it is clear.
 
-    Changes result['classes'] and result['confidence'] in place and adds
-    result['source'] (see SOURCE_* codes) and result['optical'] statistics.
+    Adds to `result`: 'classes', 'source' (see SOURCE_* codes), 'checked'
+    (pixels optical could judge) and 'optical' statistics. With
+    `evidence=None` the map is radar only.
     """
-    classes, confidence, corridor = result["classes"], result["confidence"], result["corridor"]
+    corridor = result["corridor"]
+    classes = np.zeros(corridor.shape, dtype=np.uint8)
+    classes[result["debris"]] = CLASS_DEBRIS
+    classes[result["water"]] = CLASS_WATER
     radar = classes > 0
+    source = np.where(radar, SOURCE_RADAR, 0).astype(np.uint8)
+    result["classes"], result["source"] = classes, source
+    if evidence is None:
+        result["checked"] = np.zeros(corridor.shape, dtype=bool)
+        return result
+
+    # Optical evidence counts only on the valley floor.
     checked = evidence["clear"] & corridor
     optical_change = checked & (evidence["vegetation_loss"] | evidence["new_water"])
 
-    source = np.zeros(classes.shape, dtype=np.uint8)
-    source[radar] = SOURCE_RADAR
-
-    # Confirm: radar and optical agree.
-    confirmed = radar & optical_change
-    confidence[confirmed] = np.minimum(confidence[confirmed] + settings.optical_confirm_bonus, 1.0)
-    source[confirmed] = SOURCE_BOTH
-
-    # Down-weight: radar reports a hit but the vegetation is visibly intact.
-    # Bare ground gives optical no way to judge, so it is left alone.
+    # Agreement: radar and optical both see change here.
+    agree = radar & optical_change
+    source[agree] = SOURCE_BOTH
+    # Dispute: radar reports a hit but the vegetation is visibly intact.
+    # Bare ground gives optical no way to judge, so it is not a dispute.
     disputed = radar & checked & evidence["vegetation_intact"]
-    confidence[disputed] *= settings.optical_disagree_factor
     source[disputed] = SOURCE_RADAR_DISPUTED
 
-    # Extend: optical change on the valley floor that radar missed, typically
+    # Optical only: change on the valley floor that radar missed, typically
     # inside layover or shadow where radar cannot see at all.
     min_pixels = max(int(round(settings.optical_min_patch_m2 / pixel_m ** 2)), 1)
     extra_water = remove_small_objects(
@@ -86,19 +104,12 @@ def fuse_with_optical(result, evidence, pixel_m, settings):
         checked & evidence["vegetation_loss"] & ~radar & ~extra_water, max_size=min_pixels - 1)
     classes[extra_water] = CLASS_WATER
     classes[extra_debris] = CLASS_DEBRIS
-    added = extra_water | extra_debris
-    confidence[added] = settings.optical_only_confidence
-    source[added] = SOURCE_OPTICAL
+    source[extra_water | extra_debris] = SOURCE_OPTICAL
 
-    pixel_km2 = pixel_m ** 2 / 1e6
+    result["checked"] = checked
     corridor_pixels = max(int((corridor & result["has_data"]).sum()), 1)
-    result["source"] = source
     result["optical"] = {
         "used": True,
         "corridor_clear_percent": round(100 * float(checked.sum()) / corridor_pixels, 1),
-        "radar_confirmed_km2": round(float(confirmed.sum()) * pixel_km2, 3),
-        "radar_disputed_km2": round(float(disputed.sum()) * pixel_km2, 3),
-        "added_water_km2": round(float(extra_water.sum()) * pixel_km2, 3),
-        "added_debris_km2": round(float(extra_debris.sum()) * pixel_km2, 3),
     }
     return result

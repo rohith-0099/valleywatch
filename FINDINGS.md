@@ -194,3 +194,66 @@ numbers without any reference map:
 
 Lesson: the small-box test looked good and was not representative. Every
 change must be checked on the full corridor and against the no-flood pair.
+
+## Fixes for the inflated full-corridor result (10 Oct)
+
+### Bug: the DEM edge fill dammed the river
+
+- The DEM has empty wedges along the box edges (the box is in degrees, the
+  grid in UTM). We had filled them with the HIGHEST elevation so water would
+  "flow around" them. That built a wall across the river's exit. Flow
+  routing then filled the valley behind it into a fake lake, and the whole
+  lake surface counted as valley floor.
+- Symptom: corridor of 449 km2, and a one-pixel shift of the DEM grid changed
+  the largest drainage area from 1,819 to 635 km2.
+- Fix: empty cells are now set far BELOW the terrain so rivers drain out.
+  Corridor on the full box: 45 km2 (2.4% of the box), stable to grid shifts.
+
+### Other changes
+
+- Rivers are chosen adaptively: streams draining at least 2% of the largest
+  drainage area inside the box (31 km2 on the full box, the 5 km2 floor on
+  the small box). A fixed 100 km2 value is available as a setting.
+- Corridor height limit reduced from 40 m to 20 m above the river.
+- Flood-path filter: a detection is kept only if its ground drains into a
+  river reach downstream of confident change (radar and optical agreeing on
+  at least 0.5 ha, a confident radar water patch of 0.5 ha, or an
+  optical-only patch of 2 ha). Isolated side-valley patches are dropped.
+- Radar debris is dropped where VV was already swinging in the no-flood pair.
+- Optical vegetation loss now needs: clear pixel inside the corridor, green
+  before, bare after (NDVI at most 0.3), and bright in both infrared bands
+  (rejects cloud and terrain shadow, which is dark in every band).
+- Confidence now comes from agreement: radar and optical agree = high,
+  optical only = medium, radar-only water with no clear optical view =
+  medium, everything else radar-only = low.
+
+### Acceptance test, full box (radar only, same rules on both pairs)
+
+| | Flood pair 16 to 28 Aug | No-flood pair 4 to 16 Aug | Ratio |
+|---|---|---|---|
+| Water | 1.405 km2 | 0.046 km2 | 31 to 1 |
+| Debris | 1.018 km2 | 0.111 km2 | 9 to 1 |
+
+Before the fixes the same test gave debris 5.34 against 4.98 km2 (1.07 to
+1). So roughly 3% of radar water and 11% of radar debris can be expected to
+be normal change.
+
+### Full-box result after the fixes
+
+- Water 2.392 km2, debris 2.951 km2. By source: radar and optical agree
+  1.057 km2, optical only 3.092 km2, radar only 1.164 km2, radar disputed
+  by optical 0.029 km2.
+- By eye against the Sentinel-2 after-image, the result follows the scoured
+  channel in both the lower valley and the upper gorge.
+- Still untested: the optical-only class (58% of the mapped area) has no
+  no-flood test of its own. A pair of optical composites from before the
+  flood would give one.
+- The east side river in the lower valley is still mapped as water. It has
+  confident radar change of its own, so the flood-path filter keeps it. We
+  cannot say whether that is this flood or ordinary monsoon flow.
+- An earlier attempt at the flood-path filter that allowed only radar seeds
+  removed most of the gorge (small box debris fell to 0.048 km2), because
+  radar sees too little there to start a path. Large optical patches were
+  added as seeds; small box now 0.040 km2 water and 0.220 km2 debris.
+- Limitation: detections UPSTREAM of the uppermost confident patch on a
+  river are dropped, since the path is only traced downstream.
