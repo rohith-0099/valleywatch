@@ -19,3 +19,7 @@ matplotlib
 # Config and tests
 python-dotenv
 pytest
+# Web API for the dashboard
+fastapi
+uvicorn
+httpx
