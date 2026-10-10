@@ -88,7 +88,6 @@ def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print, names=None, pr
     for name in names or LAYER_FILTERS:
         path = cache_dir / f"{prefix}_{name}_{snapshot.isoformat()}.geojson"
         if not path.exists():
-            progress(f"OpenStreetMap {name}: requesting snapshot of {snapshot}")
             features = _request_features(bbox, snapshot, LAYER_FILTERS[name])
             for feature in features:
                 # Keep the OSM id under a plain name; drop ohsome bookkeeping.
@@ -101,7 +100,9 @@ def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print, names=None, pr
             layers[name] = gpd.read_file(path)
         else:
             layers[name] = gpd.GeoDataFrame({"osm_id": []}, geometry=[], crs=4326)
-        progress(f"OpenStreetMap {name} ({prefix}): {len(layers[name])} features")
+    where = "wider routing area" if "routing" in prefix else "box"
+    progress(f"OpenStreetMap as of {snapshot} ({where}): "
+             + ", ".join(f"{len(layer)} {name}" for name, layer in layers.items()))
     return layers, snapshot
 
 

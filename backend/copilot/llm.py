@@ -1,6 +1,7 @@
 """Talk to the language model (Groq) with function calling and number checking."""
 import json
 import os
+import time
 from pathlib import Path
 
 import requests
@@ -22,7 +23,7 @@ Rules you must follow:
    arithmetic: no sums, differences, percentages or estimates of your own.
 3. If the functions do not contain the answer, say that the data does not
    contain it. Never guess. Never give population figures.
-4. Write numbers with Western digits (0-9), also in Nepali text.
+4. Write every number as digits, never as a word (write 2, not two).
 5. Be brief and plain. Rescue teams read this in a hurry.
 6. Results are estimates from satellite images, not field reports. Say so when
    it matters. This is an educational prototype, not an operational tool.
@@ -38,8 +39,13 @@ def _ask_groq(messages, use_tools=True):
             "temperature": 0.2}
     if use_tools:
         body["tools"], body["tool_choice"] = tool_schemas(), "auto"
-    response = requests.post(GROQ_URL, json=body, timeout=120,
-                             headers={"Authorization": f"Bearer {key}"})
+    for attempt in range(1, 6):
+        response = requests.post(GROQ_URL, json=body, timeout=120,
+                                 headers={"Authorization": f"Bearer {key}"})
+        # The free tier allows few tokens per minute; wait and try again.
+        if response.status_code != 429 or attempt == 5:
+            break
+        time.sleep(8 * attempt)
     if not response.ok:
         raise RuntimeError(f"Language model error {response.status_code}: {response.text[:300]}")
     return response.json()["choices"][0]["message"]

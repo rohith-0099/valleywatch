@@ -55,11 +55,14 @@ def _read_onto_grid(path, grid):
 
 def _timed_progress(progress):
     """Wrap a progress callback so every message carries the elapsed time."""
+    if getattr(progress, "is_timed", False):  # already wrapped by the caller
+        return progress
     started = time.time()
 
     def report(message):
         elapsed = int(time.time() - started)
         progress(f"[{elapsed // 60:02d}:{elapsed % 60:02d}] {message}")
+    report.is_timed = True
     return report
 
 
@@ -286,6 +289,7 @@ def run_damage_and_cutoff(bbox, flood_date, settings=None, data_dir=None, output
     data_dir = Path(data_dir or REPO_ROOT / "data" / name)
     output_dir = Path(output_dir or REPO_ROOT / "outputs" / output_name(bbox, flood_date, settings))
 
+    progress = _timed_progress(progress)
     progress("Checking roads and buildings")
     output_dir.mkdir(parents=True, exist_ok=True)
     layers, snapshot = fetch_osm_layers(bbox, flood_date, data_dir, progress)
@@ -327,6 +331,7 @@ def run_damage_and_cutoff(bbox, flood_date, settings=None, data_dir=None, output
 
 def run_analysis(bbox, flood_date, settings=None, progress=print):
     """Everything built so far, in order."""
+    progress = _timed_progress(progress)  # one clock for the whole analysis
     run_flood_mapping(bbox, flood_date, settings, progress=progress)
     return run_damage_and_cutoff(bbox, flood_date, settings, progress=progress)
 

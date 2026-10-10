@@ -14,6 +14,13 @@ NUMBER = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
 LIST_MARKER = re.compile(r"(?m)^\s*\d+[.)]\s")
 
 
+# Small numbers written as words are figures too ("two settlements"). "one"
+# is left out: it is mostly used as an ordinary word.
+NUMBER_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+                "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+WORD = re.compile(r"\b(" + "|".join(NUMBER_WORDS) + r")\b", re.IGNORECASE)
+
+
 def _parse(token):
     token = token.replace(",", "")
     decimals = len(token.split(".")[1]) if "." in token else 0
@@ -23,6 +30,7 @@ def _parse(token):
 def numbers_in_text(text):
     """All figures in a text as (value, decimals, original token)."""
     cleaned = LIST_MARKER.sub(" ", text.translate(DEVANAGARI_DIGITS))
+    cleaned = WORD.sub(lambda m: str(NUMBER_WORDS[m.group().lower()]), cleaned)
     found = []
     for match in NUMBER.finditer(cleaned):
         token = match.group().rstrip(",")

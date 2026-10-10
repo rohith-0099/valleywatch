@@ -50,6 +50,11 @@ export default function Dashboard() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [settlements, setSettlements] = useState<Feature[]>([]);
   const [picked, setPicked] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [language, setLanguage] = useState<"en" | "ne">("en");
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [chat, setChat] = useState<{ question: string; text: string; verified: boolean; rejected: string[] }[]>([]);
   const [visible, setVisible] = useState<Record<string, boolean>>(Object.fromEntries(LEGEND.map((l) => [l.key, true])));
 
   const refreshRuns = useCallback(() => {
@@ -170,7 +175,7 @@ export default function Dashboard() {
     // The base map may still be loading; wait until our sources exist.
     while (!mapReady.current) await new Promise((r) => setTimeout(r, 200));
     const s: Summary = await fetch(`${API}/api/runs/${runId}/summary`).then((r) => r.json());
-    setSummary(s);
+    setSummary(s); setRunId(runId); setChat([]);
     setBbox(s.inputs.bbox_west_south_east_north.map((v: number) => v.toFixed(3)));
     setFloodDate(s.inputs.flood_date);
     for (const name of DATA_LAYERS) {
@@ -226,6 +231,25 @@ export default function Dashboard() {
     (map.current?.getSource("highlight") as GeoJSONSource).setData({ type: "FeatureCollection", features: [...routes, ...links] } as any);
     const bounds = boundsOf({ type: "FeatureCollection", features: [f, ...links, ...routes] });
     if (bounds) map.current?.fitBounds(bounds, { padding: 90, maxZoom: 15, duration: 800 });
+  }
+
+  // ---- Copilot: answers come only from this run's computed data --------------
+  async function ask(text: string) {
+    if (!runId || !text.trim() || asking) return;
+    setAsking(true); setQuestion("");
+    try {
+      const response = await fetch(`${API}/api/runs/${runId}/ask`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: text, language }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail ?? "The copilot is not available.");
+      setChat((c) => [...c, { question: text, text: body.text, verified: body.verified, rejected: body.unsupported_numbers }]);
+    } catch (e) {
+      setChat((c) => [...c, { question: text, text: e instanceof Error ? e.message : String(e), verified: false, rejected: [] }]);
+    } finally {
+      setAsking(false);
+    }
   }
 
   function toggle(key: string) {
@@ -311,6 +335,13 @@ export default function Dashboard() {
             <button className="stat cut" onClick={() => zoomTo("settlements", (f) => f.properties.cut_off_any)}>No route at all<b>{cut.no_route_at_all.settlements}</b><small>settlements · {cut.no_route_at_all.buildings.toLocaleString()} buildings</small></button>
           </>)}
 
+          <h2>Situation report</h2>
+          <div className="grid2">
+            <button onClick={() => window.open(`${API}/api/runs/${runId}/report?lang=en`, "_blank")}>English</button>
+            <button onClick={() => window.open(`${API}/api/runs/${runId}/report?lang=ne`, "_blank")}>नेपाली</button>
+          </div>
+          <p className="hint">One page, printable. Every figure comes from this analysis.</p>
+
           <h2>Cut-off settlements · largest first</h2>
           {cutOff.length === 0 && <p className="hint">None found in this area.</p>}
           {cutOff.map((f) => {
@@ -326,6 +357,27 @@ export default function Dashboard() {
             );
           })}
           {cut && <p className="hint">{cut.town_destination}. Roads outside the box: {cut.roads_outside_box}. {cut.no_vehicle_road.had_no_vehicle_road_before} settlements had no mapped vehicle road even before the flood.</p>}
+
+          <h2>Ask the copilot</h2>
+          <p className="hint">It can only read this analysis. Each number in an answer is checked against the data before it is shown.</p>
+          {chat.map((turn, i) => (
+            <div key={i} className="turn">
+              <div className="q">{turn.question}</div>
+              <div className="a">{turn.text}</div>
+              <span className={`tag ${turn.verified ? "ok" : "all"}`}>{turn.verified ? "numbers checked" : turn.rejected.length ? `not verified: ${turn.rejected.join(", ")}` : "no answer"}</span>
+            </div>
+          ))}
+          <div className="suggest">
+            {(language === "en"
+              ? ["Which villages cannot reach a hospital?", "Which bridges were hit?", "How reliable is this map?"]
+              : ["कुन गाउँहरू अस्पताल पुग्न सक्दैनन्?", "कुन-कुन पुलमा क्षति पुगेको छ?", "यो नक्सा कति भरपर्दो छ?"]
+            ).map((text) => <button key={text} disabled={asking} onClick={() => ask(text)}>{text}</button>)}
+          </div>
+          <div className="askrow">
+            <select value={language} onChange={(e) => setLanguage(e.target.value as "en" | "ne")}><option value="en">EN</option><option value="ne">ने</option></select>
+            <input value={question} placeholder={language === "en" ? "Ask about this flood…" : "यस बाढीबारे सोध्नुहोस्…"} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask(question)} />
+            <button className="primary" disabled={asking || !question.trim()} onClick={() => ask(question)}>{asking ? "…" : "Ask"}</button>
+          </div>
 
           {test?.flood_pair && (<>
             <h2>Self-check · no-flood test</h2>
