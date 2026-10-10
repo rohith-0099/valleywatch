@@ -43,6 +43,8 @@ export default function Dashboard() {
   const [floodDate, setFloodDate] = useState("");
   const [drawing, setDrawing] = useState(false);
   const [thorough, setThorough] = useState(false);
+  const [tracing, setTracing] = useState(false);
+  const [trace, setTrace] = useState<{ length_km: number; drop_m: number | null; note: string; settlements: any[] } | null>(null);
   const [runs, setRuns] = useState<{ run_id: string }[]>([]);
   const [messages, setMessages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -81,7 +83,7 @@ export default function Dashboard() {
     map.current = m;
 
     m.on("load", () => {
-      for (const name of [...DATA_LAYERS, "aoi", "highlight"]) m.addSource(name, { type: "geojson", data: EMPTY as any });
+      for (const name of [...DATA_LAYERS, "aoi", "highlight", "path"]) m.addSource(name, { type: "geojson", data: EMPTY as any });
       const confidenceOpacity: any = ["match", ["get", "confidence_level"], "high", 0.8, "medium", 0.6, 0.35];
       m.addLayer({ id: "aoi", type: "line", source: "aoi", paint: { "line-color": "#ffd23f", "line-width": 1.5, "line-dasharray": [3, 2] } });
       m.addLayer({ id: "water-fill", type: "fill", source: "flood_debris", filter: ["==", ["get", "hazard"], "water"], paint: { "fill-color": "#2bb6ff", "fill-opacity": confidenceOpacity } });
@@ -94,6 +96,7 @@ export default function Dashboard() {
       m.addLayer({ id: "settlement-pulse", type: "circle", source: "settlements", filter: ["any", ["==", ["get", "cut_off_any"], true], ["==", ["get", "cut_off_vehicle"], true]], paint: { "circle-radius": 14, "circle-color": "#ff4136", "circle-opacity": 0.25 } });
       m.addLayer({ id: "settlements", type: "circle", source: "settlements", paint: { "circle-radius": ["interpolate", ["linear"], ["get", "buildings"], 0, 4, 1000, 10], "circle-stroke-width": 1.5, "circle-stroke-color": "#0d1315", "circle-color": ["case", ["==", ["get", "cut_off_any"], true], "#ff4136", ["==", ["get", "cut_off_vehicle"], true], "#ffd23f", "#5fd38d"] } });
       m.addLayer({ id: "highlight", type: "line", source: "highlight", paint: { "line-color": "#ffffff", "line-width": 3 } });
+      m.addLayer({ id: "path", type: "line", source: "path", layout: { "line-cap": "round" }, paint: { "line-color": "#7df9ff", "line-width": 3.5, "line-opacity": 0.95 } });
 
       mapReady.current = true;
 
@@ -155,6 +158,38 @@ export default function Dashboard() {
     };
   }, [drawing]);
 
+  // ---- Bonus: click a point, watch the flood path run down the valley ---------
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !tracing || !runId) return;
+    m.getCanvas().style.cursor = "crosshair";
+    const click = async (e: maplibregl.MapMouseEvent) => {
+      setTracing(false);
+      try {
+        const response = await fetch(`${API}/api/runs/${runId}/flood_path?lon=${e.lngLat.lng}&lat=${e.lngLat.lat}`);
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail ?? "The path could not be traced.");
+        setTrace(body);
+        // Draw the line a little further each frame, so it flows downstream.
+        const all: number[][] = body.path.geometry.coordinates;
+        const source = m.getSource("path") as GeoJSONSource;
+        const started = performance.now(), duration = 3500;
+        const draw = (now: number) => {
+          const count = Math.max(2, Math.round(all.length * Math.min(1, (now - started) / duration)));
+          source.setData({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: all.slice(0, count) } } as any);
+          if (count < all.length) requestAnimationFrame(draw);
+        };
+        requestAnimationFrame(draw);
+        const bounds = boundsOf({ type: "FeatureCollection", features: [body.path] });
+        if (bounds) m.fitBounds(bounds, { padding: 60, duration: 800 });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    };
+    m.once("click", click);
+    return () => { m.off("click", click); m.getCanvas().style.cursor = ""; };
+  }, [tracing, runId]);
+
   function showBox(box: number[]) {
     const [w, s, e, n] = box;
     (map.current?.getSource("aoi") as GeoJSONSource | undefined)?.setData({
@@ -175,7 +210,8 @@ export default function Dashboard() {
     // The base map may still be loading; wait until our sources exist.
     while (!mapReady.current) await new Promise((r) => setTimeout(r, 200));
     const s: Summary = await fetch(`${API}/api/runs/${runId}/summary`).then((r) => r.json());
-    setSummary(s); setRunId(runId); setChat([]);
+    setSummary(s); setRunId(runId); setChat([]); setTrace(null);
+    (m.getSource("path") as GeoJSONSource).setData(EMPTY as any);
     setBbox(s.inputs.bbox_west_south_east_north.map((v: number) => v.toFixed(3)));
     setFloodDate(s.inputs.flood_date);
     for (const name of DATA_LAYERS) {
@@ -387,6 +423,20 @@ export default function Dashboard() {
             <input value={question} placeholder={language === "en" ? "Ask about this flood…" : "यस बाढीबारे सोध्नुहोस्…"} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask(question)} />
             <button className="primary" disabled={asking || !question.trim()} onClick={() => ask(question)}>{asking ? "…" : "Ask"}</button>
           </div>
+          </>)}
+
+          <h2>Flood path · bonus</h2>
+          <button className={tracing ? "active" : ""} onClick={() => setTracing(!tracing)}>{tracing ? "Click a point on the map…" : "Trace path from a point"}</button>
+          {trace && (<>
+            <dl className="kv" style={{ marginTop: 8 }}>
+              <dt>Path length</dt><dd>{trace.length_km} km</dd>
+              <dt>Height lost</dt><dd>{trace.drop_m ?? "–"} m</dd>
+              <dt>Settlements along it</dt><dd>{trace.settlements.length}</dd>
+            </dl>
+            {trace.settlements.map((p, i) => (
+              <div key={i} className="along"><span>{p.km_downstream_of_start} km</span>{p.name ?? "Unnamed"}{p.name_en ? ` · ${p.name_en}` : ""} <small>{p.buildings} buildings{p.cut_off_any ? " · no route" : p.cut_off_vehicle ? " · no vehicle road" : ""}</small></div>
+            ))}
+            <p className="hint">{trace.note}</p>
           </>)}
 
           {test?.flood_pair && (<>

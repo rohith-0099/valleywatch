@@ -89,7 +89,8 @@ def river_corridor(dem, transform, crs, settings):
             "rivers": _to_full_grid(rivers, factor, dem.shape),
             "river_min_catchment_km2": round(min_catchment_km2, 1),
             "coarse": {"factor": factor, "rivers": rivers, "drains_to": drains_to,
-                       "flow_direction": np.asarray(flow_direction)}}
+                       "flow_direction": np.asarray(flow_direction),
+                       "transform": coarse_transform}}
 
 
 def flood_path(corridor_info, seeds):

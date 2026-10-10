@@ -24,6 +24,7 @@ from copilot.report import build_report
 from valleywatch import fetch
 from valleywatch.config import Settings
 from valleywatch.pipeline import REPO_ROOT, output_name, run_analysis
+from valleywatch.trace import trace_flood_path
 
 OUTPUTS = REPO_ROOT / "outputs"
 LAYERS = ("flood_debris", "buildings_hit", "road_hits", "bridges",
@@ -161,3 +162,17 @@ def ask_copilot(run_id: str, body: Question):
 def situation_report(run_id: str, lang: str = "en", refresh: bool = False):
     """The one-page situation report as a printable page."""
     return build_report(RunFacts(_complete_run_folder(run_id)), lang, refresh)
+
+
+@app.get("/api/runs/{run_id}/flood_path")
+def flood_path(run_id: str, lon: float, lat: float):
+    """Bonus: trace the downhill path from a point and list settlements along it."""
+    folder = _run_folder(run_id)
+    # Downloads are shared by the quick and thorough runs of one box.
+    dem = REPO_ROOT / "data" / run_id.removesuffix("_thorough") / "dem.tif"
+    if not dem.exists():
+        raise HTTPException(404, "The elevation data of this run is no longer on disk.")
+    try:
+        return trace_flood_path(dem, folder / "settlements.geojson", lon, lat)
+    except ValueError as error:
+        raise HTTPException(400, str(error))
