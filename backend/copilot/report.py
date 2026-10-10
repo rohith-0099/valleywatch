@@ -91,7 +91,7 @@ def summary_paragraph(facts, language):
     if result["verified"] and result["text"]:
         return {"text": result["text"], "from_model": True, "note": ""}
     return {"text": fallback, "from_model": False, "note": TEXT[language]["unverified"],
-            "rejected_numbers": result["unsupported_numbers"]}
+            "problems": result["problems"]}
 
 
 def build_report(facts, language="en", refresh=False):

@@ -168,7 +168,7 @@ export default function Dashboard() {
   }, [bbox]);
 
   // ---- Load a finished run onto the map --------------------------------------
-  const loadRun = useCallback(async (runId: string) => {
+  const loadRun = useCallback(async (runId: string, moveMap = true) => {
     const m = map.current;
     if (!m) return;
     setError(""); setPicked(null);
@@ -185,8 +185,10 @@ export default function Dashboard() {
       if (name === "settlements") setSettlements(data.features);
     }
     (m.getSource("highlight") as GeoJSONSource).setData(EMPTY as any);
-    const [w, so, e, n] = s.inputs.bbox_west_south_east_north;
-    m.fitBounds([[w, so], [e, n]], { padding: 40, duration: 900 });
+    if (moveMap) {
+      const [w, so, e, n] = s.inputs.bbox_west_south_east_north;
+      m.fitBounds([[w, so], [e, n]], { padding: 40, duration: 900 });
+    }
   }, []);
 
   // ---- Start an analysis and follow its progress -----------------------------
@@ -199,12 +201,15 @@ export default function Dashboard() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "The analysis could not start.");
+      let floodShown = false;
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500));
         const job = await fetch(`${API}/api/jobs/${body.run_id}`).then((r) => r.json());
         setMessages(job.messages);
         if (job.status === "failed") throw new Error(job.messages.at(-1));
-        if (job.status === "done") { await loadRun(body.run_id); refreshRuns(); break; }
+        // Show the flood map as soon as it exists; damage and cut-off follow.
+        if (job.flood_ready && !floodShown) { floodShown = true; await loadRun(body.run_id); }
+        if (job.status === "done") { await loadRun(body.run_id, false); refreshRuns(); break; }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -244,7 +249,7 @@ export default function Dashboard() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "The copilot is not available.");
-      setChat((c) => [...c, { question: text, text: body.text, verified: body.verified, rejected: body.unsupported_numbers }]);
+      setChat((c) => [...c, { question: text, text: body.text, verified: body.verified, rejected: body.problems ?? [] }]);
     } catch (e) {
       setChat((c) => [...c, { question: text, text: e instanceof Error ? e.message : String(e), verified: false, rejected: [] }]);
     } finally {
@@ -335,12 +340,15 @@ export default function Dashboard() {
             <button className="stat cut" onClick={() => zoomTo("settlements", (f) => f.properties.cut_off_any)}>No route at all<b>{cut.no_route_at_all.settlements}</b><small>settlements · {cut.no_route_at_all.buildings.toLocaleString()} buildings</small></button>
           </>)}
 
+          {!cut && <p className="hint">Flood map ready. Checking roads, buildings and settlements…</p>}
+          {cut && (<>
           <h2>Situation report</h2>
           <div className="grid2">
             <button onClick={() => window.open(`${API}/api/runs/${runId}/report?lang=en`, "_blank")}>English</button>
             <button onClick={() => window.open(`${API}/api/runs/${runId}/report?lang=ne`, "_blank")}>नेपाली</button>
           </div>
           <p className="hint">One page, printable. Every figure comes from this analysis.</p>
+          </>)}
 
           <h2>Cut-off settlements · largest first</h2>
           {cutOff.length === 0 && <p className="hint">None found in this area.</p>}
@@ -358,13 +366,14 @@ export default function Dashboard() {
           })}
           {cut && <p className="hint">{cut.town_destination}. Roads outside the box: {cut.roads_outside_box}. {cut.no_vehicle_road.had_no_vehicle_road_before} settlements had no mapped vehicle road even before the flood.</p>}
 
+          {cut && (<>
           <h2>Ask the copilot</h2>
-          <p className="hint">It can only read this analysis. Each number in an answer is checked against the data before it is shown.</p>
+          <p className="hint">It can only read this analysis. It may not type numbers: it writes placeholders and the system fills in the values.</p>
           {chat.map((turn, i) => (
             <div key={i} className="turn">
               <div className="q">{turn.question}</div>
               <div className="a">{turn.text}</div>
-              <span className={`tag ${turn.verified ? "ok" : "all"}`}>{turn.verified ? "numbers checked" : turn.rejected.length ? `not verified: ${turn.rejected.join(", ")}` : "no answer"}</span>
+              <span className={`tag ${turn.verified ? "ok" : "all"}`}>{turn.verified ? "numbers filled from data" : turn.rejected.length ? `not verified: ${turn.rejected.join("; ")}` : "no answer"}</span>
             </div>
           ))}
           <div className="suggest">
@@ -378,6 +387,7 @@ export default function Dashboard() {
             <input value={question} placeholder={language === "en" ? "Ask about this flood…" : "यस बाढीबारे सोध्नुहोस्…"} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask(question)} />
             <button className="primary" disabled={asking || !question.trim()} onClick={() => ask(question)}>{asking ? "…" : "Ask"}</button>
           </div>
+          </>)}
 
           {test?.flood_pair && (<>
             <h2>Self-check · no-flood test</h2>

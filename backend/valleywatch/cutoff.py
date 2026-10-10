@@ -14,9 +14,12 @@ Two levels are reported, because they mean different things to a rescuer:
 * "any": footpaths and trails count too. Losing this means there is no
   mapped way in or out at all.
 
-The road network is taken from a wider area than the box, since the nearest
-town or hospital is often outside it. The flood is only mapped inside the
-box, so roads in the surrounding buffer are ASSUMED INTACT.
+The nearest town or hospital is often outside the box. So the network is the
+full road map inside the box plus the MAIN roads, towns and hospitals of a
+wider area around it. The flood is only mapped inside the box, so roads in
+the surrounding buffer are ASSUMED INTACT. A settlement whose only way out
+of the box is a minor road is reported as "no route before the flood"
+rather than as cut off, because we cannot follow that road further.
 """
 import geopandas as gpd
 import networkx as nx
@@ -135,14 +138,16 @@ def _is_missing(node):
 def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settings):
     """Run the cut-off analysis.
 
-    layers: pre-event OSM layers of the box (used for buildings).
-    routing_layers: roads, places and health for the box plus its buffer.
+    layers: pre-event OSM layers of the box (all roads, places, buildings).
+    routing_layers: main roads, towns and health for the box plus its buffer.
     road_hits / bridges: output of Step 4 (inside the box only).
     Returns GeoDataFrames in WGS84 ('settlements', 'broken_links',
     'lost_routes') and a totals dict.
     """
-    roads = routing_layers["roads"].to_crs(crs)
-    places = routing_layers["places"].to_crs(crs)
+    # Every road inside the box, plus the main roads around it.
+    roads = pd.concat([layers["roads"], routing_layers["roads"]], ignore_index=True).to_crs(crs)
+    box_places = layers["places"].to_crs(crs)
+    wide_places = routing_layers["places"].to_crs(crs)
     health = routing_layers["health"].to_crs(crs).copy()
     health["geometry"] = health.geometry.centroid  # hospitals mapped as outlines
     buildings = layers["buildings"].to_crs(crs)
@@ -155,11 +160,15 @@ def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settin
     broken = find_broken_edges(edges, road_hits, bridges)
     graphs = {"any": graph_any, "vehicle": vehicle_only(graph_any)}
 
-    place_kind = places["place"] if "place" in places.columns else pd.Series(dtype=str)
+    def of_kind(places, kinds):
+        if "place" not in places.columns:
+            return places.iloc[0:0]
+        return places[places["place"].isin(kinds)]
+
     # Settlements are judged only inside the box, where the flood was mapped.
-    settlements = places[place_kind.isin(SETTLEMENT_PLACES) &
-                         places.within(box_polygon)].copy()
-    towns = places[place_kind.isin(TOWN_PLACES)]
+    settlements = of_kind(box_places, SETTLEMENT_PLACES)
+    settlements = settlements[settlements.within(box_polygon)].copy()
+    towns = of_kind(wide_places, TOWN_PLACES)
 
     # Size of each settlement: buildings closest to it, within a radius.
     settlements["buildings"] = 0

@@ -154,6 +154,13 @@ class Settings:
     # Roads, towns and hospitals are also fetched this far outside the box,
     # because the nearest town or hospital is often beyond its edge.
     routing_buffer_km: float = 15.0
+    # Which roads to take from that wider area:
+    # "all"  - every road and path. Slower to fetch, but walking detours
+    #          around the box edge are known, so "no route at all" is sound.
+    # "main" - main roads only. Much smaller, but with the detours missing
+    #          many more settlements are wrongly reported as having no route
+    #          at all (47 instead of 9 on our full test box).
+    routing_buffer_roads: str = "all"
     # A place further than this from any mapped road is "not on the network".
     max_snap_distance_m: float = 500.0
     # Buildings within this distance are counted towards a settlement.

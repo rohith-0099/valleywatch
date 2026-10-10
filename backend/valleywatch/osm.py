@@ -25,8 +25,16 @@ LAYER_FILTERS = {
 }
 
 
-# Layers needed for routing, fetched for a wider area than the box.
-ROUTING_LAYERS = ("roads", "places", "health")
+# In the wider area around the box only the long-distance network is needed:
+# main roads to travel on, and the towns and hospitals to travel to. Leaving
+# out every footpath and house there makes the request several times smaller.
+ROUTING_FILTERS = {
+    "roads": ("highway in (motorway, trunk, primary, secondary, tertiary, motorway_link, "
+              "trunk_link, primary_link, secondary_link, tertiary_link) "
+              "and type:way and geometry:line"),
+    "places": "place in (city, town) and type:node",
+    "health": LAYER_FILTERS["health"],
+}
 
 
 def buffered_bbox(bbox, buffer_km):
@@ -71,11 +79,12 @@ def _request_features(bbox, snapshot, filter_text):
     return response.json()["features"]
 
 
-def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print, names=None, prefix="osm"):
+def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print, filters=None, prefix="osm"):
     """Download (or load from cache) pre-event layers for a box.
 
-    names: which layers to fetch (default: all). prefix: start of the cache
-    file names, so layers for different boxes do not overwrite each other.
+    filters: {layer name: ohsome filter} (default: all layers of the box).
+    prefix: start of the cache file names, so layers for different areas do
+    not overwrite each other.
     Returns (layers, snapshot) where layers maps a layer name to a
     GeoDataFrame in WGS84.
     """
@@ -85,10 +94,11 @@ def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print, names=None, pr
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     layers = {}
-    for name in names or LAYER_FILTERS:
+    filters = filters or LAYER_FILTERS
+    for name in filters:
         path = cache_dir / f"{prefix}_{name}_{snapshot.isoformat()}.geojson"
         if not path.exists():
-            features = _request_features(bbox, snapshot, LAYER_FILTERS[name])
+            features = _request_features(bbox, snapshot, filters[name])
             for feature in features:
                 # Keep the OSM id under a plain name; drop ohsome bookkeeping.
                 props = feature["properties"]
@@ -106,9 +116,15 @@ def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print, names=None, pr
     return layers, snapshot
 
 
-def fetch_routing_layers(bbox, flood_date, cache_dir, buffer_km, progress=print):
-    """Roads, places and health facilities for the box plus a buffer around it."""
+def fetch_routing_layers(bbox, flood_date, cache_dir, buffer_km, progress=print, roads="all"):
+    """Roads, towns and health facilities for the box plus a buffer around it.
+
+    roads: "all" for every road and path, "main" for main roads only.
+    """
     wide = buffered_bbox(bbox, buffer_km)
-    layers, _ = fetch_osm_layers(wide, flood_date, cache_dir, progress,
-                                 names=ROUTING_LAYERS, prefix=f"osm_routing{int(buffer_km)}km")
+    filters = dict(ROUTING_FILTERS)
+    if roads == "all":
+        filters["roads"] = LAYER_FILTERS["roads"]
+    layers, _ = fetch_osm_layers(wide, flood_date, cache_dir, progress, filters=filters,
+                                 prefix=f"osm_routing_{roads}_{int(buffer_km)}km")
     return layers

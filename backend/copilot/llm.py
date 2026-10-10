@@ -7,7 +7,8 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from .check import unsupported_numbers
+from .check import numbers_typed_by_model
+from .slots import fill, to_slots
 from .facts import call_tool, tool_schemas
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -19,11 +20,14 @@ SYSTEM_PROMPT = """You are the ValleyWatch assistant for flood rescue teams.
 
 Rules you must follow:
 1. You know nothing about this flood except what the functions return. Call them.
-2. Every number you write must be copied exactly from a function result. Do no
-   arithmetic: no sums, differences, percentages or estimates of your own.
-3. If the functions do not contain the answer, say that the data does not
+2. NEVER type a digit or a number word. Every value in a function result comes
+   with a "write_this" placeholder in curly braces, for example {{buildings_hit}}.
+   Write the placeholder exactly; the system replaces it with the value. Lists
+   have one placeholder per row and one for the whole list: use those, do not
+   retype names with numbers.
+3. Do no arithmetic: no sums, differences, percentages or estimates of your own.
+4. If the functions do not contain the answer, say that the data does not
    contain it. Never guess. Never give population figures.
-4. Write every number as digits, never as a word (write 2, not two).
 5. Be brief and plain. Rescue teams read this in a hurry.
 6. Results are estimates from satellite images, not field reports. Say so when
    it matters. This is an educational prototype, not an operational tool.
@@ -54,14 +58,14 @@ def _ask_groq(messages, use_tools=True):
 def answer(facts, question, language="en", max_rounds=6):
     """Answer one question from the computed data.
 
-    Returns {'text', 'verified', 'unsupported_numbers', 'functions_called'}.
-    'verified' is True only when every number in the text was found in the
-    results of the functions the model called.
+    Returns {'text', 'verified', 'problems', 'functions_called'}. 'verified'
+    is True only when the model typed no number itself and every placeholder
+    it used exists; 'text' then has the placeholders filled in.
     """
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT.format(language=LANGUAGE_NAMES[language])},
         {"role": "user", "content": question}]
-    seen, called, text = [], [], ""
+    registry, called, raw, problems = {}, [], "", []
     retried = False
     for _ in range(max_rounds + 2):
         reply = _ask_groq(messages)
@@ -75,27 +79,32 @@ def answer(facts, question, language="en", max_rounds=6):
                 except json.JSONDecodeError:
                     arguments = {}
                 result = call_tool(facts, name, arguments)
-                seen.append(result)
+                if "error" in result:
+                    view = result
+                else:
+                    view, slots = to_slots(name, arguments, result, language)
+                    registry.update(slots)
                 called.append({"function": name, "arguments": arguments})
                 messages.append({"role": "tool", "tool_call_id": call["id"],
-                                 "content": json.dumps(result, ensure_ascii=False)})
+                                 "content": json.dumps(view, ensure_ascii=False)})
             continue
 
-        text = (reply.get("content") or "").strip()
-        missing = unsupported_numbers(text, seen, question)
-        if not missing:
-            return {"text": text, "verified": True, "unsupported_numbers": [],
-                    "functions_called": called}
+        raw = (reply.get("content") or "").strip()
+        typed = numbers_typed_by_model(raw, question)
+        text, unknown = fill(raw, registry)
+        problems = ([f"typed the number {n}" for n in typed]
+                    + [f"used unknown placeholder {{{k}}}" for k in unknown])
+        if not problems:
+            return {"text": text, "verified": True, "problems": [], "functions_called": called}
         if retried:
             break
-        # One chance to correct itself, told exactly which figures failed.
+        # One chance to correct itself, told exactly what was wrong.
         retried = True
-        messages.append({"role": "assistant", "content": text})
+        messages.append({"role": "assistant", "content": raw})
         messages.append({"role": "user", "content":
-                         "These numbers are not in the function results: " + ", ".join(missing)
-                         + ". Rewrite the answer using only numbers copied exactly from the "
-                           "function results, with no calculations. If you need more data, "
-                           "call a function."})
-    return {"text": text, "verified": False,
-            "unsupported_numbers": unsupported_numbers(text, seen, question),
-            "functions_called": called}
+                         "Your answer broke the rules: " + "; ".join(problems) + ". Rewrite it. "
+                         "Type no digits or number words. Use only placeholders that appear as "
+                         "\"write_this\" in the function results. Call a function if you need "
+                         "more data."})
+    text, _ = fill(raw, registry)
+    return {"text": text, "verified": False, "problems": problems, "functions_called": called}

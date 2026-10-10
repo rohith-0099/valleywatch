@@ -48,12 +48,20 @@ class AnalysisRequest(BaseModel):
 
 def _work(run_id, bbox, flood_date, settings):
     job = jobs[run_id]
+    report = job["messages"].append
     try:
-        run_analysis(bbox, flood_date, settings, progress=job["messages"].append)
+        run_analysis(bbox, flood_date, settings, progress=report,
+                     on_flood_ready=lambda: job.update(flood_ready=True))
+        # Write the situation report once, now, so that opening it later is
+        # instant and needs no further call to the language model.
+        report("Writing the situation report")
+        facts = RunFacts(OUTPUTS / run_id)
+        for language in ("en", "ne"):
+            build_report(facts, language, refresh=True)
         job["status"] = "done"
     except Exception as error:  # noqa: BLE001 - shown to the user
         traceback.print_exc()
-        job["messages"].append(f"Failed: {error}")
+        report(f"Failed: {error}")
         job["status"] = "failed"
 
 
@@ -72,7 +80,7 @@ def start_analysis(request: AnalysisRequest):
     run_id = output_name(bbox, request.flood_date, settings)
     if run_id in jobs and jobs[run_id]["status"] == "running":
         return {"run_id": run_id}
-    jobs[run_id] = {"status": "running", "messages": []}
+    jobs[run_id] = {"status": "running", "flood_ready": False, "messages": []}
     threading.Thread(target=_work, args=(run_id, bbox, request.flood_date, settings),
                      daemon=True).start()
     return {"run_id": run_id}
@@ -90,6 +98,14 @@ def _run_folder(run_id):
     # Refuse names that would step outside the outputs folder.
     if folder.parent != OUTPUTS.resolve() or not (folder / "summary.json").exists():
         raise HTTPException(404, "No such run")
+    return folder
+
+
+def _complete_run_folder(run_id):
+    """A run whose damage and cut-off steps have finished (needed by the copilot)."""
+    folder = _run_folder(run_id)
+    if "cutoff" not in json.loads((folder / "summary.json").read_text()):
+        raise HTTPException(409, "This analysis has not finished yet.")
     return folder
 
 
@@ -115,7 +131,10 @@ def run_summary(run_id: str):
 def run_layer(run_id: str, layer: str):
     if layer not in LAYERS:
         raise HTTPException(404, "No such layer")
-    return FileResponse(_run_folder(run_id) / f"{layer}.geojson", media_type="application/geo+json")
+    path = _run_folder(run_id) / f"{layer}.geojson"
+    if not path.exists():  # this step of the analysis has not finished yet
+        return {"type": "FeatureCollection", "features": []}
+    return FileResponse(path, media_type="application/geo+json")
 
 
 @app.get("/api/runs/{run_id}/quicklook")
@@ -133,7 +152,7 @@ def ask_copilot(run_id: str, body: Question):
     """Answer a question from the computed data of one run."""
     language = body.language if body.language in ("en", "ne") else "en"
     try:
-        return answer(RunFacts(_run_folder(run_id)), body.question[:1000], language)
+        return answer(RunFacts(_complete_run_folder(run_id)), body.question[:1000], language)
     except RuntimeError as error:
         raise HTTPException(502, str(error))
 
@@ -141,4 +160,4 @@ def ask_copilot(run_id: str, body: Question):
 @app.get("/api/runs/{run_id}/report", response_class=HTMLResponse)
 def situation_report(run_id: str, lang: str = "en", refresh: bool = False):
     """The one-page situation report as a printable page."""
-    return build_report(RunFacts(_run_folder(run_id)), lang, refresh)
+    return build_report(RunFacts(_complete_run_folder(run_id)), lang, refresh)

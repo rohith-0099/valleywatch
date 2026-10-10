@@ -1,6 +1,7 @@
 """Run the analysis end to end: area + flood date -> flood map and damage list."""
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import time
 from datetime import date, timedelta
@@ -281,9 +282,24 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     return summary
 
 
+DAMAGE_LAYERS = ("buildings_hit", "road_hits", "bridges")
+CUTOFF_LAYERS = ("settlements", "broken_links", "lost_routes")
+
+
+def fetch_openstreetmap(bbox, flood_date, settings, data_dir, progress=print):
+    """All pre-event map data the damage and cut-off steps need."""
+    layers, snapshot = fetch_osm_layers(bbox, flood_date, data_dir, progress)
+    routing_layers = fetch_routing_layers(bbox, flood_date, data_dir, settings.routing_buffer_km,
+                                          progress, roads=settings.routing_buffer_roads)
+    return layers, snapshot, routing_layers
+
+
 def run_damage_and_cutoff(bbox, flood_date, settings=None, data_dir=None, output_dir=None,
-                       progress=print):
-    """Steps 4 and 5: damage overlay and cut-off settlements for this run."""
+                          progress=print, osm=None):
+    """Steps 4 and 5: damage overlay and cut-off settlements for this run.
+
+    osm: result of `fetch_openstreetmap`, if the caller already fetched it.
+    """
     settings = settings or Settings()
     name = _run_name(bbox, flood_date)
     data_dir = Path(data_dir or REPO_ROOT / "data" / name)
@@ -292,7 +308,8 @@ def run_damage_and_cutoff(bbox, flood_date, settings=None, data_dir=None, output
     progress = _timed_progress(progress)
     progress("Checking roads and buildings")
     output_dir.mkdir(parents=True, exist_ok=True)
-    layers, snapshot = fetch_osm_layers(bbox, flood_date, data_dir, progress)
+    layers, snapshot, routing_layers = osm or fetch_openstreetmap(
+        bbox, flood_date, settings, data_dir, progress)
     hazards = gpd.read_file(output_dir / "flood_debris.geojson")
     damage = assess_damage(hazards, layers, fetch.utm_epsg_for(bbox), settings)
     for layer in ("buildings_hit", "road_hits", "bridges"):
@@ -313,8 +330,6 @@ def run_damage_and_cutoff(bbox, flood_date, settings=None, data_dir=None, output
 
     # ---- Step 5: cut-off settlements ----------------------------------------
     progress("Finding cut-off settlements")
-    routing_layers = fetch_routing_layers(bbox, flood_date, data_dir,
-                                          settings.routing_buffer_km, progress)
     cutoff = analyse_cutoff(layers, routing_layers, damage["road_hits"], damage["bridges"],
                             bbox, fetch.utm_epsg_for(bbox), settings)
     for layer in ("settlements", "broken_links", "lost_routes"):
@@ -329,11 +344,31 @@ def run_damage_and_cutoff(bbox, flood_date, settings=None, data_dir=None, output
     return summary
 
 
-def run_analysis(bbox, flood_date, settings=None, progress=print):
-    """Everything built so far, in order."""
+def run_analysis(bbox, flood_date, settings=None, progress=print, on_flood_ready=None):
+    """The whole analysis, in order.
+
+    on_flood_ready: called as soon as the flood map is written, before the
+    damage and cut-off steps, so a dashboard can show it without waiting.
+    """
+    settings = settings or Settings()
     progress = _timed_progress(progress)  # one clock for the whole analysis
-    run_flood_mapping(bbox, flood_date, settings, progress=progress)
-    return run_damage_and_cutoff(bbox, flood_date, settings, progress=progress)
+    data_dir = REPO_ROOT / "data" / _run_name(bbox, flood_date)
+    output_dir = REPO_ROOT / "outputs" / output_name(bbox, flood_date, settings)
+    # Remove results of an earlier run of the same box, so that nothing old
+    # is shown next to the new flood map while the later steps are running.
+    for stale in [f"{layer}.geojson" for layer in DAMAGE_LAYERS + CUTOFF_LAYERS] + \
+            ["report_summary_en.json", "report_summary_ne.json"]:
+        (output_dir / stale).unlink(missing_ok=True)
+
+    # The map data comes from a different server than the satellite images,
+    # so it is fetched at the same time instead of afterwards.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        osm = pool.submit(fetch_openstreetmap, bbox, flood_date, settings, data_dir, progress)
+        run_flood_mapping(bbox, flood_date, settings, progress=progress)
+        if on_flood_ready:
+            on_flood_ready()
+        osm = osm.result()
+    return run_damage_and_cutoff(bbox, flood_date, settings, progress=progress, osm=osm)
 
 
 def main():

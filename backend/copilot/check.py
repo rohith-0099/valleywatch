@@ -1,19 +1,19 @@
-"""Check that every number in generated text exists in the computed data.
+"""Check that the model typed no number of its own.
 
-A language model can state a figure that looks right and is wrong. So before
-any text is shown we pull out every number in it and look for each one among
-the values the model actually received from the fact functions. A number
-passes if it equals a data value, or is that value rounded to fewer
-decimals. Anything else fails the text.
+The model must write placeholders such as {buildings_hit}; code fills them
+in (see `slots.py`). So in the model's raw text, any digit outside a
+placeholder is a number the model made up or copied by hand, and the text
+is rejected. Numbers that the user typed in the question are allowed back
+("the 5 largest").
 """
 import re
+
+from .slots import PLACEHOLDER
 
 DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 NUMBER = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
 # "1." or "2)" at the start of a line is list numbering, not a figure.
 LIST_MARKER = re.compile(r"(?m)^\s*\d+[.)]\s")
-
-
 # Small numbers written as words are figures too ("two settlements"). "one"
 # is left out: it is mostly used as an ordinary word.
 NUMBER_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
@@ -21,54 +21,17 @@ NUMBER_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7
 WORD = re.compile(r"\b(" + "|".join(NUMBER_WORDS) + r")\b", re.IGNORECASE)
 
 
-def _parse(token):
-    token = token.replace(",", "")
-    decimals = len(token.split(".")[1]) if "." in token else 0
-    return float(token), decimals
-
-
-def numbers_in_text(text):
-    """All figures in a text as (value, decimals, original token)."""
+def _numbers(text):
     cleaned = LIST_MARKER.sub(" ", text.translate(DEVANAGARI_DIGITS))
     cleaned = WORD.sub(lambda m: str(NUMBER_WORDS[m.group().lower()]), cleaned)
-    found = []
-    for match in NUMBER.finditer(cleaned):
-        token = match.group().rstrip(",")
-        value, decimals = _parse(token)
-        found.append((value, decimals, token))
-    return found
+    return [m.group().rstrip(",").replace(",", "") for m in NUMBER.finditer(cleaned)]
 
 
-def numbers_in_data(data):
-    """Every number in a nested fact structure, including digits inside strings
-    (dates, identifiers), so that "28 August 2026" is supported by "2026-08-28"."""
-    values = set()
+def numbers_typed_by_model(raw_text, question=""):
+    """Numbers in the model's raw text that are not placeholders.
 
-    def walk(item):
-        if isinstance(item, bool) or item is None:
-            return
-        if isinstance(item, (int, float)):
-            values.add(float(item))
-        elif isinstance(item, str):
-            for part in re.findall(r"\d+(?:\.\d+)?", item.translate(DEVANAGARI_DIGITS)):
-                values.add(float(part))
-        elif isinstance(item, dict):
-            for value in item.values():
-                walk(value)
-        elif isinstance(item, (list, tuple)):
-            for value in item:
-                walk(value)
-
-    walk(data)
-    return values
-
-
-def unsupported_numbers(text, data, question=""):
-    """Tokens in `text` that match nothing in `data` (or in the user's question)."""
-    allowed = numbers_in_data(data) | numbers_in_data(question)
-    missing = []
-    for value, decimals, token in numbers_in_text(text):
-        tolerance = 0.5 * 10 ** (-decimals) + 1e-9
-        if not any(abs(abs(a) - abs(value)) <= tolerance for a in allowed):
-            missing.append(token)
-    return missing
+    An empty list means the text is clean.
+    """
+    without_placeholders = PLACEHOLDER.sub(" ", raw_text)
+    allowed = {float(n) for n in _numbers(question)}
+    return [n for n in _numbers(without_placeholders) if float(n) not in allowed]
