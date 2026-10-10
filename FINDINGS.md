@@ -164,3 +164,33 @@ changed.
 - Bridge rule: a bridge is hit only when the hazard reaches the bank at one
   of its ends, or debris covers half the deck. Water change under the span
   alone does not count.
+
+## Full corridor after the changes: the result got WORSE (10 Oct)
+
+Box 85.10 27.85 85.45 28.32. Cold run of the three new downloads took 10.5
+minutes (batch jobs, two at a time).
+
+| | First version | Now, radar only | Now, with optical |
+|---|---|---|---|
+| Water | 0.705 km2 | 1.645 km2 | 2.973 km2 |
+| Debris | 1.739 km2 | 5.336 km2 | 21.787 km2 |
+
+These totals are not credible. Three problems, all visible in our own
+numbers without any reference map:
+
+1. **Radar debris is almost all noise.** The pre-event pair (4 to 16 Aug, no
+   flood) gives 4.977 km2 of "debris" under the same rules, against 5.336
+   km2 for the flood pair. So about 93% of radar debris is normal change.
+   Radar water is better: 0.261 km2 with no flood against 1.645 km2.
+2. **The corridor is far too wide at this scale.** It covers 468 km2, a
+   quarter of the box, because every side valley draining 10 km2 counts as a
+   river. Hysteresis and the relaxed slope limit then let weak change spread
+   through all of it. On the small box the corridor was only 2.7 km2, which
+   hid the problem.
+3. **Optical vegetation loss over-reaches.** It added 16.45 km2 of debris.
+   Optical also disputed more radar area (2.43 km2) than it confirmed (1.47
+   km2). Likely causes: crop and seasonal change on valley-floor farmland,
+   cloud shadow missed by the scene classification, and the wide corridor.
+
+Lesson: the small-box test looked good and was not representative. Every
+change must be checked on the full corridor and against the no-flood pair.
