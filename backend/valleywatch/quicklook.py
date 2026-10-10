@@ -14,7 +14,10 @@ WATER_COLOUR, DEBRIS_COLOUR, MASK_COLOUR = "#00b7ff", "#ff7a00", "#555555"
 def save_quicklook(result, extent, path, title):
     """Four panels: before, after, change, and the final classification."""
     fig, axes = plt.subplots(1, 4, figsize=(26, 10), constrained_layout=True)
-    grey = dict(cmap="gray", vmin=-22, vmax=-2, extent=extent, interpolation="nearest")
+    # Stretch the grey scale to this scene: slopes facing the radar are far
+    # brighter in mountains than on plains, so fixed limits would saturate.
+    low, high = np.nanpercentile(result["before_vv_db"], [2, 98])
+    grey = dict(cmap="gray", vmin=low, vmax=high, extent=extent, interpolation="nearest")
 
     axes[0].imshow(result["before_vv_db"], **grey)
     axes[0].set_title("Before: VV backscatter (dB)")
