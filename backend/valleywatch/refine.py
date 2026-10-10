@@ -1,10 +1,18 @@
-"""Final clean-up of the class map: flood-path filter and confidence."""
+"""Turn radar and optical evidence into the final map, and test it.
+
+`fused_map` is the one place where the final class map is built. It is run
+twice with identical rules: on the flood pair, and on a pair of images from
+before the flood. The second run should find almost nothing; whatever it
+does find is our false-alarm level (see `acceptance_test`).
+"""
 import numpy as np
+from scipy import ndimage
 from skimage.morphology import remove_small_objects
 
 from .corridor import flood_path
 from .flood_mask import CLASS_DEBRIS, CLASS_WATER
-from .optical import SOURCE_BOTH, SOURCE_OPTICAL, SOURCE_RADAR, SOURCE_RADAR_DISPUTED
+from .optical import (SOURCE_BOTH, SOURCE_OPTICAL, SOURCE_RADAR, SOURCE_RADAR_DISPUTED,
+                      combine_radar_and_optical)
 
 
 def confident_seeds(mask, pixel_m, min_area_m2):
@@ -13,26 +21,45 @@ def confident_seeds(mask, pixel_m, min_area_m2):
     return remove_small_objects(mask, max_size=seed_pixels - 1)
 
 
-def keep_flood_path(result, corridor_info, pixel_m, settings):
-    """Drop detections that are not on a river reach downstream of confident change.
+def grown_from_core(detected, corridor):
+    """Keep detection patches that reach the valley floor.
 
-    Confident change = radar and optical agreeing, the confident heart of a
-    radar water patch, or a large optical-only patch (for gorges where radar
-    is blind). Radar-only debris is too noisy to start a path.
+    A patch may spread up the valley side (the reach zone), but only as one
+    connected area of change that starts in the core corridor. Change that
+    sits on the valley side with no link to the floor is dropped.
     """
-    seeds = confident_seeds((result["source"] == SOURCE_BOTH) | result["water_core"],
+    labels, _ = ndimage.label(detected, structure=np.ones((3, 3)))
+    rooted = np.unique(labels[detected & corridor])
+    return np.isin(labels, rooted[rooted > 0])
+
+
+def fused_map(water, debris, water_core, evidence, zones, pixel_m, settings):
+    """Final class map from radar masks and (optional) optical evidence.
+
+    Steps: combine the sources; keep patches grown from the valley floor;
+    keep only ground draining into a river reach downstream of confident
+    change. Returns {'classes', 'source', 'checked', 'flood_path'}.
+    """
+    out = combine_radar_and_optical(water, debris, evidence, zones["reach"], pixel_m, settings)
+    classes, source = out["classes"], out["source"]
+
+    keep = grown_from_core(classes > 0, zones["corridor"])
+    # Confident change: radar and optical agreeing, the confident heart of a
+    # radar water patch, or a large optical-only patch (for gorges where
+    # radar is blind). Radar-only debris is too noisy to start a path.
+    seeds = confident_seeds(((source == SOURCE_BOTH) | water_core) & keep,
                             pixel_m, settings.seed_min_area_m2)
-    seeds |= confident_seeds(result["source"] == SOURCE_OPTICAL, pixel_m,
+    seeds |= confident_seeds((source == SOURCE_OPTICAL) & keep, pixel_m,
                              settings.optical_seed_min_area_m2)
-    path = flood_path(corridor_info, seeds)
-    off_path = (result["classes"] > 0) & ~path
-    result["classes"][off_path] = 0
-    result["source"][off_path] = 0
-    result["flood_path"] = path
-    return result
+    path = flood_path(zones, seeds)
+    keep &= path
+    classes[~keep] = 0
+    source[~keep] = 0
+    out["flood_path"] = path
+    return out
 
 
-def score_confidence(result, settings):
+def score_confidence(classes, source, checked, already_changing, settings):
     """Confidence from how many independent sources agree.
 
         radar and optical agree            high
@@ -44,50 +71,76 @@ def score_confidence(result, settings):
 
     Ground that was already changing before the flood loses a step.
     """
-    classes, source = result["classes"], result["source"]
     score = np.zeros(classes.shape, dtype=np.float32)
     radar_only = np.isin(source, (SOURCE_RADAR, SOURCE_RADAR_DISPUTED))
     score[radar_only] = settings.score_radar_only
-    unchecked_water = (source == SOURCE_RADAR) & (classes == CLASS_WATER) & ~result["checked"]
+    unchecked_water = (source == SOURCE_RADAR) & (classes == CLASS_WATER) & ~checked
     score[unchecked_water] = settings.score_radar_water_unchecked
     score[source == SOURCE_OPTICAL] = settings.score_optical_only
     score[source == SOURCE_BOTH] = settings.score_radar_and_optical
-    penalised = (classes > 0) & result["already_changing"]
+    penalised = (classes > 0) & already_changing
     score[penalised] = np.maximum(score[penalised] - settings.score_already_changing_penalty, 0.1)
-    result["confidence"] = score
-    return result
+    return score
 
 
-def radar_only_areas(water, debris, water_core, corridor_info, pixel_m, settings):
-    """Area (km2) of radar water and debris left after the flood-path filter.
-
-    Used for the acceptance test: the same call on the flood pair and on the
-    no-flood pair shows how much of the radar result is real.
-    """
-    path = flood_path(corridor_info, confident_seeds(water_core, pixel_m, settings.seed_min_area_m2))
+def _areas(classes, pixel_m):
     pixel_km2 = pixel_m ** 2 / 1e6
-    return {"water_km2": round(float((water & path).sum()) * pixel_km2, 3),
-            "debris_km2": round(float((debris & ~water & path).sum()) * pixel_km2, 3),
-            "water_km2_before_path_filter": round(float(water.sum()) * pixel_km2, 3),
-            "debris_km2_before_path_filter": round(float((debris & ~water).sum()) * pixel_km2, 3)}
+    return {"water_km2": round(float((classes == CLASS_WATER).sum()) * pixel_km2, 3),
+            "debris_km2": round(float((classes == CLASS_DEBRIS).sum()) * pixel_km2, 3)}
 
 
-def optical_only_areas(evidence, common_clear, corridor, corridor_info, pixel_m, settings):
-    """Area (km2) the optical rules alone would map, after the flood-path filter.
+def acceptance_test(radar, evidence, quiet_evidence, zones, pixel_m, settings):
+    """Run the identical rules on the flood pair and on a no-flood pair.
 
-    Used for the optical acceptance test. `common_clear` limits the count to
-    ground that is clear in every composite compared, so that the flood pair
-    and the no-flood pair are judged on exactly the same pixels.
+    radar: merged radar result (holds the no-flood radar masks, if a
+    baseline image was available). evidence / quiet_evidence: optical
+    evidence for the flood pair and for two composites from before the
+    flood. Optical is compared only on ground clear in all three composites
+    so both pairs are judged on the same pixels.
     """
-    judged = common_clear & corridor
-    min_pixels = max(int(round(settings.optical_min_patch_m2 / pixel_m ** 2)), 1)
-    water = remove_small_objects(judged & evidence["new_water"], max_size=min_pixels - 1)
-    debris = remove_small_objects(judged & evidence["vegetation_loss"] & ~water,
-                                  max_size=min_pixels - 1)
-    seeds = confident_seeds(water | debris, pixel_m, settings.optical_seed_min_area_m2)
-    path = flood_path(corridor_info, seeds)
-    pixel_km2 = pixel_m ** 2 / 1e6
-    return {"water_km2": round(float((water & path).sum()) * pixel_km2, 3),
-            "debris_km2": round(float((debris & path).sum()) * pixel_km2, 3),
-            "water_km2_before_path_filter": round(float(water.sum()) * pixel_km2, 3),
-            "debris_km2_before_path_filter": round(float(debris.sum()) * pixel_km2, 3)}
+    quiet_radar = radar["no_flood"]
+    if quiet_radar is None and quiet_evidence is None:
+        return {"not_run": "no pre-event radar pass and no earlier optical composite"}
+
+    empty = np.zeros(zones["reach"].shape, dtype=bool)
+    if evidence is not None and quiet_evidence is not None:
+        common = evidence["clear"] & quiet_evidence["clear"]
+        flood_ev = dict(evidence, clear=common)
+        quiet_ev = dict(quiet_evidence, clear=common)
+    else:
+        flood_ev = quiet_ev = None
+
+    # The flood side uses debris BEFORE baseline pruning: the no-flood side
+    # has no still-earlier image to prune with, and the two must match.
+    flood_debris = radar.get("debris_before_pruning", radar["debris"])
+    if quiet_radar is None:  # optical-only comparison
+        flood = fused_map(empty, empty, empty, flood_ev, zones, pixel_m, settings)
+        quiet = fused_map(empty, empty, empty, quiet_ev, zones, pixel_m, settings)
+        compared = "optical only (no pre-event radar pass)"
+    else:
+        flood = fused_map(radar["water"], flood_debris, radar["water_core"], flood_ev,
+                          zones, pixel_m, settings)
+        quiet = fused_map(quiet_radar["water"], quiet_radar["debris"],
+                          quiet_radar["water_core"], quiet_ev, zones, pixel_m, settings)
+        compared = ("radar and optical" if flood_ev is not None
+                    else "radar only (no earlier optical composite)")
+
+    flood_areas, quiet_areas = _areas(flood["classes"], pixel_m), _areas(quiet["classes"], pixel_m)
+    flood_total = flood_areas["water_km2"] + flood_areas["debris_km2"]
+    quiet_total = quiet_areas["water_km2"] + quiet_areas["debris_km2"]
+
+    def share(part, whole):
+        return round(100 * part / whole, 1) if whole else None
+
+    total_share = share(quiet_total, flood_total)
+    return {
+        "compared": compared,
+        "flood_pair": flood_areas, "no_flood_pair": quiet_areas,
+        "no_flood_as_percent_of_flood": {
+            "water": share(quiet_areas["water_km2"], flood_areas["water_km2"]),
+            "debris": share(quiet_areas["debris_km2"], flood_areas["debris_km2"]),
+            "total": total_share},
+        "budget_percent": 100 * settings.false_alarm_budget,
+        "within_budget": (total_share is not None
+                          and total_share <= 100 * settings.false_alarm_budget),
+    }

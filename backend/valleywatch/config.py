@@ -61,10 +61,15 @@ class Settings:
     river_fraction_of_largest: float = 0.02
     river_min_catchment_km2: float = 5.0
     river_fixed_catchment_km2: float = 100.0
-    # The corridor is all ground less than this height above the nearest
-    # river cell. Flood water and debris travel along the valley floor, so
-    # detections outside the corridor are treated as unrelated change.
-    corridor_max_hand_m: float = 20.0
+    # Two zones beside the river, by height above the nearest river cell:
+    # * core: the valley floor proper. A detection must start here.
+    # * reach: how far up the valley side a detection may GROW, as long as
+    #   it stays connected to change in the core. A debris flood spreads
+    #   over fans and terraces well above the river bed, so a hard cap at
+    #   the core height cuts real deposits off. The reach was set with the
+    #   false-alarm budget below, not by eye.
+    corridor_core_hand_m: float = 20.0
+    corridor_reach_hand_m: float = 60.0
     # Inside the corridor the slope limit is relaxed: in a gorge the 30 m DEM
     # blurs the river bed into the valley walls and makes it look steep.
     corridor_max_slope_deg: float = 45.0
@@ -107,6 +112,16 @@ class Settings:
     # Subtracted where the ground was already changing before the flood.
     score_already_changing_penalty: float = 0.3
 
+    # --- Second radar track ---
+    # Also use a track that looks from the opposite side, to see into the
+    # first track's layover and shadow.
+    use_second_track: bool = True
+
+    # --- False-alarm budget ---
+    # Rules are loosened only while the same rules, run on images from before
+    # the flood, map no more than this share of the flood-pair area.
+    false_alarm_budget: float = 0.05
+
     # --- Live runs ---
     # Boxes up to this size are fetched by direct download (minutes). Larger
     # boxes need batch jobs (much slower) and must be asked for explicitly.
@@ -114,9 +129,10 @@ class Settings:
     parallel_downloads: int = 2       # concurrent requests the free tier allows
 
     # --- Damage overlay ---
-    # Map positions are uncertain by about one 10 m pixel, so a feature this
-    # close to a hazard polygon is reported as a low-confidence hit.
-    feature_tolerance_m: float = 10.0
+    # Map positions are uncertain by a pixel or so. A building that does not
+    # touch a hazard polygon but stands within this distance of one is
+    # listed as "possibly affected" (a separate, low-confidence tier).
+    possibly_affected_m: float = 15.0
     min_road_hit_m: float = 10.0      # shorter overlaps are pixel-edge noise
     # A bridge is judged on the bank beyond each end of its deck: a segment
     # this long, continuing the bridge line onto land. The bank counts as

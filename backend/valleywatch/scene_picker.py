@@ -158,23 +158,29 @@ def pick_sentinel1_pair(bbox, flood_date, settings=None):
         return {"date": p["date"].isoformat(), "start_utc": p["start"].isoformat(),
                 "platform": p["platform"], "scene_ids": p["scene_ids"]}
 
-    return {
-        "relative_orbit": chosen["relative_orbit"],
-        "direction": chosen["direction"],
-        "before": describe(chosen["before"]),
-        "after": describe(chosen["after"]),
-        "baseline": describe(chosen["baseline"]) if chosen["baseline"] else None,
-        "days_before": chosen["days_before"],
-        "days_after": chosen["days_after"],
-        "coverage": round(chosen["coverage"], 3),
-        "reason": reason,
-        "other_tracks": [
-            {"relative_orbit": c["relative_orbit"], "direction": c["direction"],
-             "before": c["before"]["date"].isoformat(),
-             "after": c["after"]["date"].isoformat(),
-             "coverage": round(c["coverage"], 3)}
-            for c in candidates if c is not chosen],
-    }
+    def describe_track(c):
+        return {"relative_orbit": c["relative_orbit"], "direction": c["direction"],
+                "before": describe(c["before"]), "after": describe(c["after"]),
+                "baseline": describe(c["baseline"]) if c["baseline"] else None,
+                "days_before": c["days_before"], "days_after": c["days_after"],
+                "coverage": round(c["coverage"], 3)}
+
+    # A second track that looks from the OPPOSITE side. Slopes that are in
+    # layover or shadow for one look direction are often visible from the
+    # other, so a second track fills part of the radar blind zones.
+    opposite = [c for c in covering
+                if c is not chosen and c["direction"] != chosen["direction"]]
+    second = min(opposite, key=lambda c: (c["days_after"], c["days_before"])) if opposite else None
+
+    result = describe_track(chosen)
+    result["reason"] = reason
+    result["second_track"] = describe_track(second) if second else None
+    result["other_tracks"] = [
+        {"relative_orbit": c["relative_orbit"], "direction": c["direction"],
+         "before": c["before"]["date"].isoformat(), "after": c["after"]["date"].isoformat(),
+         "coverage": round(c["coverage"], 3)}
+        for c in candidates if c is not chosen]
+    return result
 
 
 def list_sentinel2_scenes(bbox, flood_date, settings=None):

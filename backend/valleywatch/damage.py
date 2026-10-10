@@ -1,14 +1,16 @@
 """Step 4: which buildings, roads and bridges did the flood hit?
 
 We lay the pre-event OpenStreetMap features over the water and debris
-polygons. Every hit gets a confidence level, because a 10 m satellite pixel
-cannot prove that a particular house or road is destroyed.
+polygons. Every result carries a confidence level, because a 10 m satellite
+pixel cannot prove that a particular house or road is destroyed.
 
-Confidence rule (same for buildings and roads):
+Buildings fall into two tiers:
 
-    hazard polygon is ...        feature overlaps it     feature only near it
-    strong                       high                    medium
-    weak                         medium                  low
+    hit                 the building overlaps a hazard polygon
+                        (high confidence if the polygon is strong,
+                        medium if it is weak)
+    possibly affected   the building is within 15 m of a polygon but does
+                        not touch it (always low confidence)
 
 A polygon is "strong" when its own confidence is medium or high, or when
 optical imagery supports it.
@@ -34,24 +36,28 @@ def _level(overlaps, strong):
 
 
 def assess_buildings(buildings, hazards, settings):
-    """Mark buildings that overlap or lie next to a hazard polygon."""
+    """Mark buildings that overlap a hazard polygon or stand next to one."""
+    out = buildings.copy()
+    out["status"], out["hit"], out["hazard"], out["confidence_level"] = None, False, None, None
     if buildings.empty or hazards.empty:
-        return buildings.assign(hit=False, hazard=None, confidence_level=None)
+        return out
     near = hazards.copy()
-    near["geometry"] = hazards.buffer(settings.feature_tolerance_m)
+    near["geometry"] = hazards.buffer(settings.possibly_affected_m)
     pairs = gpd.sjoin(buildings[["geometry"]], near, predicate="intersects")
     # For each building/polygon pair: does the building touch the polygon
-    # itself, or only its tolerance zone?
+    # itself, or only the 15 m zone around it?
     exact = hazards.geometry.loc[pairs["index_right"]].values
     pairs["overlaps"] = pairs.geometry.intersects(gpd.GeoSeries(exact, index=pairs.index,
                                                                 crs=hazards.crs))
-    pairs["level"] = [_level(o, s) for o, s in zip(pairs["overlaps"], pairs["strong"])]
+    # 0 = possibly affected, 1 = hit by a weak polygon, 2 = hit by a strong one.
+    pairs["level"] = pairs["overlaps"].astype(int) * (1 + pairs["strong"].astype(int))
     # Several polygons may touch one building: keep the strongest evidence.
     best = pairs.sort_values("level").groupby(level=0).last()
-    out = buildings.copy()
-    out["hit"] = out.index.isin(best.index)
-    out["hazard"] = best["hazard"].reindex(out.index)
-    out["confidence_level"] = best["level"].map(lambda v: LEVELS[v]).reindex(out.index)
+    out.loc[best.index, "hit"] = best["level"] > 0
+    out.loc[best.index, "status"] = best["level"].map(
+        lambda v: "hit" if v > 0 else "possibly affected")
+    out.loc[best.index, "hazard"] = best["hazard"]
+    out.loc[best.index, "confidence_level"] = best["level"].map(lambda v: LEVELS[v])
     return out
 
 
@@ -163,11 +169,13 @@ def assess_damage(hazards, layers, crs, settings):
         return {level: int(counts.get(level, 0)) for level in reversed(LEVELS)}
 
     hit_buildings, hit_bridges = buildings[buildings["hit"]], bridges[bridges["hit"]]
+    possible_buildings = buildings[buildings["status"] == "possibly affected"]
     totals = {
         "buildings_total": int(len(buildings)),
         "buildings_hit": int(len(hit_buildings)),
         "buildings_hit_by_confidence": by_level(hit_buildings),
         "buildings_hit_by_hazard": hit_buildings["hazard"].value_counts().to_dict(),
+        "buildings_possibly_affected": int(len(possible_buildings)),
         "roads_total_km": round(float(roads.length.sum()) / 1000, 2),
         "roads_hit_km": round(float(road_hits["length_m"].sum()) / 1000, 2),
         "roads_hit_sections": int(len(road_hits)),
@@ -178,13 +186,14 @@ def assess_damage(hazards, layers, crs, settings):
         # Bridges over a changed river whose banks show no change: not hit.
         "bridges_exposed_not_hit": int((bridges["status"] == "exposed").sum()),
     }
-    building_columns = [c for c in ("osm_id", "building", "name", "hit", "hazard",
+    building_columns = [c for c in ("osm_id", "building", "name", "status", "hit", "hazard",
                                     "confidence_level", "geometry") if c in buildings.columns]
     bridge_columns = [c for c in ("osm_id", "highway", "name", "hit", "status", "hazard",
                                   "confidence_level", "reason", "length_m", "geometry")
                       if c in bridges.columns]
     return {
-        "buildings_hit": hit_buildings[building_columns].to_crs(4326),
+        # Both tiers are written; the "status" column tells them apart.
+        "buildings_hit": pd.concat([hit_buildings, possible_buildings])[building_columns].to_crs(4326),
         "road_hits": road_hits.to_crs(4326),
         "bridges": bridges[bridge_columns].to_crs(4326),
         "totals": totals,

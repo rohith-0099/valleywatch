@@ -5,6 +5,7 @@ products ourselves. Sentinel-1 is orthorectified there with the Copernicus
 30 m DEM, which puts every pixel at its true map position even on slopes.
 """
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
@@ -116,6 +117,26 @@ def sentinel2_clear_composite_cube(conn, bbox, start, end, resolution_m):
                                       projection=utm_epsg_for(bbox))
 
 
+def _download_with_retry(request, partial, progress, attempts=6):
+    """Direct download with retries.
+
+    The free tier limits how many requests run at once (HTTP 429) and the
+    service sometimes fails on its own side (HTTP 5xx). Both usually pass
+    after a short wait.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            request["cube"].download(str(partial), format="GTiff")
+            return
+        except openeo.rest.OpenEoApiPlainError as error:
+            status = error.http_status_code or 0
+            if not (status == 429 or status >= 500) or attempt == attempts:
+                raise
+            wait_s = 15 * attempt
+            progress(f"{request['label']}: server answered {status}, retrying in {wait_s} s")
+            time.sleep(wait_s)
+
+
 def _download_one(request, use_batch, progress):
     """Fetch one raster, unless a previous run already cached it."""
     path = Path(request["path"])
@@ -132,7 +153,7 @@ def _download_one(request, use_batch, progress):
             str(partial), out_format="GTiff", title=f"ValleyWatch {request['label']}",
             print=lambda message: progress(f"{request['label']}: {message}"))
     else:
-        request["cube"].download(str(partial), format="GTiff")
+        _download_with_retry(request, partial, progress)
     partial.rename(path)
     progress(f"{request['label']}: done")
     return path

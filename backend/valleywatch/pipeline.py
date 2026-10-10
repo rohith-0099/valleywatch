@@ -16,12 +16,11 @@ from .config import Settings
 from .corridor import river_corridor
 from .cutoff import analyse_cutoff
 from .damage import assess_damage
-from .flood_mask import CLASS_DEBRIS, CLASS_WATER, detect_flood_and_debris
-from .optical import combine_radar_and_optical, optical_evidence
+from .flood_mask import CLASS_DEBRIS, CLASS_WATER, detect_flood_and_debris, merge_tracks
+from .optical import optical_evidence
 from .osm import fetch_osm_layers, fetch_routing_layers
 from .quicklook import save_quicklook
-from .refine import (keep_flood_path, optical_only_areas, radar_only_areas,
-                     score_confidence)
+from .refine import acceptance_test, fused_map, score_confidence
 from .scene_picker import list_sentinel2_scenes, pick_sentinel1_pair
 from .terrain import terrain_mask
 from .vectorize import masks_to_polygons
@@ -82,19 +81,27 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     # ---- Step 2a: download everything, several requests at a time ---------
     report("Downloading radar images, elevation and optical images")
     conn = fetch.connect()
-    track = f"orbit{pair['relative_orbit']}"
     resolution = settings.resolution_m
+    tracks = [pair]
+    if settings.use_second_track and pair["second_track"]:
+        tracks.append(pair["second_track"])
+        second = pair["second_track"]
+        report(f"Second radar track: orbit {second['relative_orbit']} "
+               f"({second['direction'].lower()}), {second['before']['date']} to "
+               f"{second['after']['date']}, looking from the opposite side")
     requests = []
-    for side in ("before", "after", "baseline"):
-        if pair[side] is None:
-            continue
-        day = pair[side]["date"]
-        requests.append({
-            "label": f"radar {side} ({day})",
-            "cube": fetch.backscatter_cube(conn, bbox, day, pair["direction"], resolution),
-            "path": data_dir / f"s1_{side}_{day}_{track}.tif",
-            # The flood map needs before and after; the baseline is a bonus.
-            "optional": side == "baseline", "key": side})
+    for number, track in enumerate(tracks):
+        for side in ("before", "after", "baseline"):
+            if track[side] is None:
+                continue
+            day, orbit = track[side]["date"], track["relative_orbit"]
+            requests.append({
+                "label": f"radar orbit {orbit} {side} ({day})",
+                "cube": fetch.backscatter_cube(conn, bbox, day, track["direction"], resolution),
+                "path": data_dir / f"s1_{side}_{day}_orbit{orbit}.tif",
+                # Only the primary before/after pair is essential.
+                "optional": number > 0 or side == "baseline",
+                "key": (number, side)})
     requests.append({"label": "elevation", "cube": fetch.dem_cube(conn, bbox, resolution),
                      "path": data_dir / "dem.tif", "optional": False, "key": "dem"})
     window = timedelta(days=settings.search_days_before)
@@ -116,9 +123,9 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     def available(key):
         return isinstance(paths.get(key), Path)
 
-    # ---- Step 2b: put everything on the grid of the before image ----------
+    # ---- Step 2b: put everything on the grid of the primary before image ---
     report("Aligning images")
-    with rasterio.open(paths["before"]) as src:
+    with rasterio.open(paths[0, "before"]) as src:
         grid = {"transform": src.transform, "crs": src.crs,
                 "height": src.height, "width": src.width}
         bounds = src.bounds
@@ -128,74 +135,68 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
         stack = _read_onto_grid(paths[key], grid)
         return {"VV": stack[0], "VH": stack[1]}
 
-    before, after = radar_image("before"), radar_image("after")
-    baseline = radar_image("baseline") if available("baseline") else None
     dem = _read_onto_grid(paths["dem"], grid)[0]
 
-    # ---- Step 2c: terrain masks and river corridor from the DEM -----------
-    report("Finding the river corridor and radar blind zones")
-    terrain = terrain_mask(dem, pixel_m, pair["direction"], settings)
-    corridor_info = river_corridor(dem, grid["transform"], grid["crs"], settings)
-    corridor = corridor_info["corridor"]
+    # ---- Step 2c: river zones from the DEM ---------------------------------
+    report("Finding the river corridor")
+    zones = river_corridor(dem, grid["transform"], grid["crs"], settings)
+    corridor = zones["corridor"]
 
-    # ---- Step 2d: radar detection ------------------------------------------
-    report("Detecting flood and debris")
-    result = detect_flood_and_debris(before, after, terrain, corridor, pixel_m,
-                                     settings, baseline=baseline)
+    # ---- Step 2d: radar detection, once per track ---------------------------
+    radar_runs, tracks_used = [], []
+    for number, track in enumerate(tracks):
+        if not (available((number, "before")) and available((number, "after"))):
+            report(f"Radar orbit {track['relative_orbit']}: images not available, skipped")
+            continue
+        report(f"Detecting flood and debris, radar orbit {track['relative_orbit']}")
+        # Layover and shadow depend on the look direction, so each track
+        # gets its own terrain mask.
+        terrain = terrain_mask(dem, pixel_m, track["direction"], settings)
+        baseline = radar_image((number, "baseline")) if available((number, "baseline")) else None
+        radar_runs.append(detect_flood_and_debris(
+            radar_image((number, "before")), radar_image((number, "after")), terrain,
+            corridor, zones["reach"], pixel_m, settings, baseline=baseline))
+        tracks_used.append(track["relative_orbit"])
+    result = merge_tracks(radar_runs)
+    result["corridor"] = corridor
 
-    # Acceptance test: the same radar rules on the flood pair and on a pair
-    # with no flood. If the two give similar areas, the radar result is noise.
-    acceptance = None
-    if result["no_flood"] is not None:
-        quiet = result["no_flood"]
-        acceptance = {"radar": {
-            "flood_pair": radar_only_areas(result["water"], result["debris_before_pruning"],
-                                           result["water_core"], corridor_info, pixel_m, settings),
-            "no_flood_pair": radar_only_areas(quiet["water"], quiet["debris"],
-                                              quiet["water_core"], corridor_info, pixel_m, settings),
-            "no_flood_pair_dates": [pair["baseline"]["date"], pair["before"]["date"]],
-        }}
-
-    # ---- Step 3: optical check where the sky was clear ---------------------
+    # ---- Step 3: optical evidence where the sky was clear -------------------
+    bands = fetch.S2_BANDS
+    evidence = quiet_evidence = None
     if available("s2_before") and available("s2_after"):
         report("Checking against optical images")
-        bands = fetch.S2_BANDS
         s2_before = dict(zip(bands, _read_onto_grid(paths["s2_before"], grid)))
         s2_after = dict(zip(bands, _read_onto_grid(paths["s2_after"], grid)))
         evidence = optical_evidence(s2_before, s2_after, settings)
-        combine_radar_and_optical(result, evidence, pixel_m, settings)
-
-        # Optical acceptance test: the optical rules on two composites from
-        # before the flood, counted on ground that is clear in all three.
         if available("s2_earlier"):
             s2_earlier = dict(zip(bands, _read_onto_grid(paths["s2_earlier"], grid)))
             quiet_evidence = optical_evidence(s2_earlier, s2_before, settings)
-            common_clear = evidence["clear"] & quiet_evidence["clear"]
-            corridor_pixels = max(int((corridor & result["has_data"]).sum()), 1)
-            acceptance = acceptance or {}
-            acceptance["optical"] = {
-                "flood_pair": optical_only_areas(evidence, common_clear, corridor,
-                                                 corridor_info, pixel_m, settings),
-                "no_flood_pair": optical_only_areas(quiet_evidence, common_clear, corridor,
-                                                    corridor_info, pixel_m, settings),
-                "no_flood_pair_windows": [[d.isoformat() for d in optical_windows["earlier"]],
-                                          [d.isoformat() for d in optical_windows["before"]]],
-                "corridor_clear_in_all_three_percent": round(
-                    100 * float((common_clear & corridor).sum()) / corridor_pixels, 1),
-            }
-        else:
-            acceptance = acceptance or {}
-            acceptance["optical"] = {"not_run": "no earlier Sentinel-2 composite available"}
+        reach_pixels = max(int((zones["reach"] & result["has_data"]).sum()), 1)
+        result["optical"] = {"used": True, "reach_zone_clear_percent": round(
+            100 * float((evidence["clear"] & zones["reach"]).sum()) / reach_pixels, 1)}
     else:
         report("No usable optical images; result is from radar only")
-        combine_radar_and_optical(result, None, pixel_m, settings)
         result["optical"] = {"used": False, "reason": "No Sentinel-2 composite available: "
                              + "; ".join(str(paths[k]) for k in ("s2_before", "s2_after")
                                          if not available(k))}
 
-    # ---- Keep the connected flood path, then score confidence --------------
-    keep_flood_path(result, corridor_info, pixel_m, settings)
-    score_confidence(result, settings)
+    # ---- Final map: combine sources, grow from the valley floor, keep the
+    # ---- connected flood path, score confidence ------------------------------
+    report("Building the final map")
+    fused = fused_map(result["water"], result["debris"], result["water_core"], evidence,
+                      zones, pixel_m, settings)
+    result.update(fused)
+    result["confidence"] = score_confidence(result["classes"], result["source"],
+                                            result["checked"], result["already_changing"],
+                                            settings)
+
+    # ---- Acceptance test: the same rules on images from before the flood ----
+    report("Running the no-flood acceptance test")
+    acceptance = acceptance_test(result, evidence, quiet_evidence, zones, pixel_m, settings)
+    acceptance["no_flood_radar_dates"] = [
+        [t["baseline"]["date"], t["before"]["date"]] for t in tracks if t["baseline"]]
+    acceptance["no_flood_optical_windows"] = [
+        [d.isoformat() for d in optical_windows[k]] for k in ("earlier", "before")]
 
     # ---- Outputs -------------------------------------------------------------
     report("Writing outputs")
@@ -218,7 +219,8 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
         "grid": {"crs": str(grid["crs"]), "pixel_m": pixel_m,
                  "width": grid["width"], "height": grid["height"]},
         "thresholds": result["thresholds"],
-        "river_min_catchment_km2": corridor_info["river_min_catchment_km2"],
+        "radar_orbits_used": tracks_used,
+        "river_min_catchment_km2": zones["river_min_catchment_km2"],
         "acceptance_test": acceptance,
         "totals": {
             "water_km2": round(float((result["classes"] == CLASS_WATER).sum()) * pixel_km2, 3),
@@ -232,6 +234,7 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
             "polygons_by_confidence": polygons["confidence_level"].value_counts().to_dict(),
             "polygons_by_source": polygons["source"].value_counts().to_dict(),
             "corridor_km2": round(float((corridor & mapped).sum()) * pixel_km2, 2),
+            "reach_zone_km2": round(float((zones["reach"] & mapped).sum()) * pixel_km2, 2),
             # Share of the corridor where radar could not judge at all.
             "corridor_not_mapped_by_radar_percent": round(
                 100 * float((result["not_mapped"] & corridor).sum())
@@ -257,6 +260,7 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     with rasterio.open(output_dir / "classes.tif", "w", **profile) as dst:
         dst.write(np.where(mapped, result["classes"], 255).astype(np.uint8), 1)
 
+    result["terrain"] = None
     title = (f"Flood date {flood_date}  |  Sentinel-1 relative orbit "
              f"{pair['relative_orbit']} {pair['direction'].lower()}  |  "
              f"before {pair['before']['date']}  after {pair['after']['date']}")

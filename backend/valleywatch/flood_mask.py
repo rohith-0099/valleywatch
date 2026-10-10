@@ -125,14 +125,15 @@ def classify_change(z, allowed, dark_before, pixel_m, settings):
     return water, debris, water_strength, debris_strength
 
 
-def detect_flood_and_debris(before, after, terrain, corridor, pixel_m, settings,
+def detect_flood_and_debris(before, after, terrain, corridor, reach, pixel_m, settings,
                             baseline=None):
     """Radar detection of new water and debris.
 
     before / after / baseline: dicts with linear 'VV' and 'VH' arrays on one
     grid. `baseline` is an optional image taken one pass before `before`; it
     shows how much the area changes when there is no flood.
-    terrain: output of terrain.terrain_mask. corridor: boolean river corridor.
+    terrain: output of terrain.terrain_mask. corridor / reach: the two
+    river zones from corridor.river_corridor.
 
     Returns boolean 'water' and 'debris' masks plus everything later steps
     need. Classes and confidence are assigned after the optical check.
@@ -146,8 +147,9 @@ def detect_flood_and_debris(before, after, terrain, corridor, pixel_m, settings,
     slope_ok = np.where(corridor, terrain["slope"] <= settings.corridor_max_slope_deg,
                         terrain["slope"] <= settings.max_slope_deg)
     usable = has_data & ~terrain["blind"] & slope_ok
-    # Detections are only accepted on the valley floor.
-    allowed = usable & corridor
+    # Radar change is considered anywhere in the reach zone. Whether a patch
+    # there is kept is decided later (it must connect to the valley floor).
+    allowed = usable & reach
 
     change, z, thresholds = scaled_change(before_db, after_db, usable, settings)
     dark_before = dark_like_water(before_db, settings)
@@ -160,7 +162,7 @@ def detect_flood_and_debris(before, after, terrain, corridor, pixel_m, settings,
         "water_core": water & (water_strength >= 1.0),
         "change_vv_db": change["VV"], "change_vh_db": change["VH"],
         "before_vv_db": before_db["VV"], "after_vv_db": after_db["VV"],
-        "not_mapped": has_data & ~usable, "corridor": corridor,
+        "not_mapped": has_data & ~usable,
         # Counted on mappable ground only: on steep ground "dark" is mostly
         # radar shadow, not water.
         "permanent_water": dark_before & usable,
@@ -175,7 +177,7 @@ def detect_flood_and_debris(before, after, terrain, corridor, pixel_m, settings,
         base_ok = usable & np.isfinite(baseline_db["VV"]) & np.isfinite(baseline_db["VH"])
         _, base_z, base_thresholds = scaled_change(baseline_db, before_db, base_ok, settings)
         base_water, base_debris, base_strength, _ = classify_change(
-            base_z, base_ok & corridor, dark_like_water(baseline_db, settings),
+            base_z, base_ok & reach, dark_like_water(baseline_db, settings),
             pixel_m, settings)
         low = settings.hysteresis_low_fraction
         already_changing = base_ok & ((np.abs(base_z["VV"]) > low) | (np.abs(base_z["VH"]) > low))
@@ -191,3 +193,27 @@ def detect_flood_and_debris(before, after, terrain, corridor, pixel_m, settings,
         result["debris"] = remove_small_objects(debris & ~already_changing,
                                                 max_size=min_pixels - 1)
     return result
+
+
+def merge_tracks(runs):
+    """Combine radar detections from several tracks into one.
+
+    Each track sees the valley from a different side, so each has its own
+    blind zones. A pixel is detected if ANY track detects it, and it is
+    "not mapped" only if EVERY track is blind there. Pictures for the
+    quick-look come from the first (primary) track.
+    """
+    merged = dict(runs[0])
+    for other in runs[1:]:
+        for key in ("water", "debris", "water_core", "already_changing"):
+            merged[key] = merged[key] | other[key]
+        merged["not_mapped"] = merged["not_mapped"] & other["not_mapped"]
+        if "debris_before_pruning" in merged and "debris_before_pruning" in other:
+            merged["debris_before_pruning"] = (merged["debris_before_pruning"]
+                                               | other["debris_before_pruning"])
+        if merged["no_flood"] is not None and other["no_flood"] is not None:
+            merged["no_flood"] = {key: merged["no_flood"][key] | other["no_flood"][key]
+                                  for key in ("water", "debris", "water_core")}
+    merged["debris"] = merged["debris"] & ~merged["water"]
+    merged["thresholds"] = [run["thresholds"] for run in runs]
+    return merged

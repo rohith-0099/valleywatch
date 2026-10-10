@@ -42,7 +42,7 @@ def river_corridor(dem, transform, crs, settings):
     """Find the rivers and the valley floor beside them.
 
     Returns a dict with full-resolution 'hand' (metres above the river) and
-    boolean 'corridor' and 'rivers', plus the coarse flow-routing arrays that
+    boolean 'corridor' (core zone), 'reach' (growth zone) and 'rivers', plus the coarse flow-routing arrays that
     `flood_path` needs.
     """
     pixel_m = abs(transform.a)
@@ -81,9 +81,11 @@ def river_corridor(dem, transform, crs, settings):
     rivers = np.asarray(rivers)
 
     hand_full = _to_full_grid(hand, factor, dem.shape)
-    corridor = (np.isfinite(hand_full) & (hand_full <= settings.corridor_max_hand_m)
-                & np.isfinite(dem))
-    return {"hand": hand_full, "corridor": corridor,
+    on_land = np.isfinite(hand_full) & np.isfinite(dem)
+    corridor = on_land & (hand_full <= settings.corridor_core_hand_m)
+    reach = on_land & (hand_full <= max(settings.corridor_reach_hand_m,
+                                        settings.corridor_core_hand_m))
+    return {"hand": hand_full, "corridor": corridor, "reach": reach,
             "rivers": _to_full_grid(rivers, factor, dem.shape),
             "river_min_catchment_km2": round(min_catchment_km2, 1),
             "coarse": {"factor": factor, "rivers": rivers, "drains_to": drains_to,

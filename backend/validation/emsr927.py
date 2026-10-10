@@ -167,12 +167,18 @@ def validate(run, activation, reference_folder):
         ours_buildings = inside(buildings)
         if len(ours_buildings):
             ours_buildings = ours_buildings.assign(geometry=ours_buildings.geometry.centroid)
+        # Older runs have no "status" column: every listed building is a hit.
+        is_hit = (ours_buildings["status"] == "hit" if "status" in ours_buildings.columns
+                  else pd.Series(True, index=ours_buildings.index))
+        ref_damaged = ref_buildings[ref_buildings["damage_gra"].isin(DAMAGED)]
         row["reference_building_grades"] = ref_buildings["damage_gra"].value_counts().to_dict()
         row["buildings_vs_destroyed_or_damaged"] = point_scores(
-            ours_buildings, ref_buildings[ref_buildings["damage_gra"].isin(DAMAGED)], BUILDING_MATCH_M)
+            ours_buildings[is_hit], ref_damaged, BUILDING_MATCH_M)
+        row["buildings_incl_possibly_affected_vs_destroyed_or_damaged"] = point_scores(
+            ours_buildings, ref_damaged, BUILDING_MATCH_M)
         row["buildings_vs_any_grade_incl_possibly"] = point_scores(
-            ours_buildings, ref_buildings[ref_buildings["damage_gra"].isin(DAMAGED + POSSIBLY)],
-            BUILDING_MATCH_M)
+            ours_buildings[is_hit],
+            ref_buildings[ref_buildings["damage_gra"].isin(DAMAGED + POSSIBLY)], BUILDING_MATCH_M)
 
         ref_roads = inside(_layer(folder, "transportationL", crs))
         row["reference_road_grades_km"] = (
@@ -212,6 +218,8 @@ def print_table(report):
             "IoU": e["iou"], "precision": e["precision"], "recall": e["recall"],
             "bldg recall": f"{b['reference_found']}/{b['reference']}",
             "bldg precision": f"{b['ours_confirmed']}/{b['ours']}",
+            "bldg recall +possibly": "{reference_found}/{reference}".format(
+                **row["buildings_incl_possibly_affected_vs_destroyed_or_damaged"]),
             "road recall km": f"{r['reference_found_km']}/{r['reference_km']}",
             "bridge recall": f"{g['reference_found']}/{g['reference']}",
             "bridge precision": f"{g['ours_confirmed']}/{g['ours']}"})

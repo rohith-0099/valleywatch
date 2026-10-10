@@ -38,7 +38,7 @@ def test_water_debris_and_masks():
 
     settings = Settings()
     terrain = terrain_mask(dem, 10.0, "ASCENDING", settings)
-    out = detect_flood_and_debris(before, after, terrain, corridor, 10.0, settings)
+    out = detect_flood_and_debris(before, after, terrain, corridor, corridor, 10.0, settings)
     classes = np.zeros(shape, dtype=np.uint8)
     classes[out["debris"]] = CLASS_DEBRIS
     classes[out["water"]] = CLASS_WATER
@@ -63,7 +63,8 @@ def test_debris_already_changing_before_flood_is_dropped():
     baseline["VV"][70:100, 10:40] *= 0.1
     settings = Settings()
     terrain = terrain_mask(np.zeros(shape), 10.0, "ASCENDING", settings)
-    out = detect_flood_and_debris(before, after, terrain, np.ones(shape, bool), 10.0,
+    everywhere = np.ones(shape, bool)
+    out = detect_flood_and_debris(before, after, terrain, everywhere, everywhere, 10.0,
                                   settings, baseline=baseline)
     assert out["debris"][15:35, 15:35].mean() > 0.95
     assert out["debris"][75:95, 15:35].mean() < 0.05

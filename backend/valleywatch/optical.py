@@ -6,6 +6,7 @@ need a clear sky, so this step works only where clear pixels exist both
 before and after the event, and says so where they do not.
 """
 import numpy as np
+from scipy import ndimage
 from skimage.morphology import remove_small_objects
 
 from .flood_mask import CLASS_DEBRIS, CLASS_WATER
@@ -65,51 +66,51 @@ def optical_evidence(before, after, settings):
     }
 
 
-def combine_radar_and_optical(result, evidence, pixel_m, settings):
+def combine_radar_and_optical(water, debris, evidence, reach, pixel_m, settings):
     """Build the class map from radar, and from optical where it is clear.
 
-    Adds to `result`: 'classes', 'source' (see SOURCE_* codes), 'checked'
-    (pixels optical could judge) and 'optical' statistics. With
-    `evidence=None` the map is radar only.
+    water / debris: radar masks. evidence: output of optical_evidence, or
+    None for a radar-only map. reach: zone in which detections may lie.
+    Returns {'classes', 'source' (see SOURCE_* codes), 'checked' (pixels
+    optical could judge)}.
     """
-    corridor = result["corridor"]
-    classes = np.zeros(corridor.shape, dtype=np.uint8)
-    classes[result["debris"]] = CLASS_DEBRIS
-    classes[result["water"]] = CLASS_WATER
+    classes = np.zeros(reach.shape, dtype=np.uint8)
+    classes[debris] = CLASS_DEBRIS
+    classes[water] = CLASS_WATER
     radar = classes > 0
     source = np.where(radar, SOURCE_RADAR, 0).astype(np.uint8)
-    result["classes"], result["source"] = classes, source
     if evidence is None:
-        result["checked"] = np.zeros(corridor.shape, dtype=bool)
-        return result
+        return {"classes": classes, "source": source,
+                "checked": np.zeros(reach.shape, dtype=bool)}
 
-    # Optical evidence counts only on the valley floor.
-    checked = evidence["clear"] & corridor
+    checked = evidence["clear"] & reach
     optical_change = checked & (evidence["vegetation_loss"] | evidence["new_water"])
 
     # Agreement: radar and optical both see change here.
-    agree = radar & optical_change
-    source[agree] = SOURCE_BOTH
+    source[radar & optical_change] = SOURCE_BOTH
     # Dispute: radar reports a hit but the vegetation is visibly intact.
     # Bare ground gives optical no way to judge, so it is not a dispute.
-    disputed = radar & checked & evidence["vegetation_intact"]
-    source[disputed] = SOURCE_RADAR_DISPUTED
+    source[radar & checked & evidence["vegetation_intact"]] = SOURCE_RADAR_DISPUTED
 
-    # Optical only: change on the valley floor that radar missed, typically
-    # inside layover or shadow where radar cannot see at all.
+    # Optical only: change that radar missed, typically inside layover or
+    # shadow where radar cannot see at all.
     min_pixels = max(int(round(settings.optical_min_patch_m2 / pixel_m ** 2)), 1)
-    extra_water = remove_small_objects(
-        checked & evidence["new_water"] & ~radar, max_size=min_pixels - 1)
     extra_debris = remove_small_objects(
-        checked & evidence["vegetation_loss"] & ~radar & ~extra_water, max_size=min_pixels - 1)
-    classes[extra_water] = CLASS_WATER
-    classes[extra_debris] = CLASS_DEBRIS
-    source[extra_water | extra_debris] = SOURCE_OPTICAL
+        checked & evidence["vegetation_loss"] & ~radar, max_size=min_pixels - 1)
 
-    result["checked"] = checked
-    corridor_pixels = max(int((corridor & result["has_data"]).sum()), 1)
-    result["optical"] = {
-        "used": True,
-        "corridor_clear_percent": round(100 * float(checked.sum()) / corridor_pixels, 1),
-    }
-    return result
+    # Optical water needs company. Rivers widen through every monsoon, so
+    # "water now, not a month ago" also appears with no flood (our no-flood
+    # test found over half as much). A flood leaves debris or radar change
+    # beside its new water; seasonal widening does not. So an optical water
+    # patch is kept only if it touches radar change or optical debris.
+    candidate_water = remove_small_objects(
+        checked & evidence["new_water"] & ~radar & ~extra_debris, max_size=min_pixels - 1)
+    support = ndimage.binary_dilation(radar | extra_debris, np.ones((3, 3)), iterations=2)
+    labels, _ = ndimage.label(candidate_water, structure=np.ones((3, 3)))
+    supported = np.unique(labels[support & candidate_water])
+    extra_water = np.isin(labels, supported[supported > 0])
+
+    classes[extra_debris] = CLASS_DEBRIS
+    classes[extra_water] = CLASS_WATER
+    source[extra_water | extra_debris] = SOURCE_OPTICAL
+    return {"classes": classes, "source": source, "checked": checked}
