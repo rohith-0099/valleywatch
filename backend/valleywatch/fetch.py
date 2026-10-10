@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import openeo
+import requests
 from dotenv import load_dotenv
 
 from .config import OPENEO_URL
@@ -127,12 +128,15 @@ def _with_retry(action, label, progress, attempts=6):
     for attempt in range(1, attempts + 1):
         try:
             return action()
-        except openeo.rest.OpenEoApiPlainError as error:
-            status = error.http_status_code or 0
-            if not (status == 429 or status >= 500) or attempt == attempts:
+        except (openeo.rest.OpenEoApiPlainError, requests.exceptions.RequestException) as error:
+            # A dropped connection (no status code) is also worth another try.
+            status = getattr(error, "http_status_code", None)
+            temporary = status is None or status == 429 or status >= 500
+            if not temporary or attempt == attempts:
                 raise
             wait_s = 15 * attempt
-            progress(f"{label}: server answered {status}, retrying in {wait_s} s")
+            reason = f"server answered {status}" if status else "connection dropped"
+            progress(f"{label}: {reason}, retrying in {wait_s} s")
             time.sleep(wait_s)
 
 

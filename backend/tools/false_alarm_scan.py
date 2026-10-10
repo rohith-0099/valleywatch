@@ -28,12 +28,20 @@ def main():
     parser.add_argument("--date", required=True)
     parser.add_argument("--setting", required=True)
     parser.add_argument("--values", nargs="+", type=float, required=True)
+    parser.add_argument("--fix", nargs="*", default=[], metavar="NAME=VALUE",
+                        help="Other settings held fixed during the scan")
     args = parser.parse_args()
 
     rows = []
     for value in args.values:
         settings = Settings()
         setattr(settings, args.setting, value)
+        for item in args.fix:
+            name, text = item.split("=")
+            current = getattr(settings, name)
+            # Convert the text to the type the setting already has.
+            setattr(settings, name, text == "True" if isinstance(current, bool)
+                    else type(current)(text))
         # Outputs go to a throw-away folder; downloads still come from the cache.
         with tempfile.TemporaryDirectory() as scratch, contextlib.redirect_stdout(io.StringIO()):
             summary = run_flood_mapping(tuple(args.bbox), date.fromisoformat(args.date),

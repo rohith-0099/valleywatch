@@ -98,17 +98,18 @@ def combine_radar_and_optical(water, debris, evidence, reach, pixel_m, settings)
     extra_debris = remove_small_objects(
         checked & evidence["vegetation_loss"] & ~radar, max_size=min_pixels - 1)
 
-    # Optical water needs company. Rivers widen through every monsoon, so
-    # "water now, not a month ago" also appears with no flood (our no-flood
-    # test found over half as much). A flood leaves debris or radar change
-    # beside its new water; seasonal widening does not. So an optical water
-    # patch is kept only if it touches radar change or optical debris.
-    candidate_water = remove_small_objects(
-        checked & evidence["new_water"] & ~radar & ~extra_debris, max_size=min_pixels - 1)
-    support = ndimage.binary_dilation(radar | extra_debris, np.ones((3, 3)), iterations=2)
-    labels, _ = ndimage.label(candidate_water, structure=np.ones((3, 3)))
-    supported = np.unique(labels[support & candidate_water])
-    extra_water = np.isin(labels, supported[supported > 0])
+    # Optical-only water is off by default (see `optical_water_alone` in the
+    # settings for the evidence). When switched on, a patch must at least
+    # touch radar change or optical debris: a flood leaves debris or radar
+    # change beside its new water, seasonal river widening does not.
+    extra_water = np.zeros(reach.shape, dtype=bool)
+    if settings.optical_water_alone:
+        candidate_water = remove_small_objects(
+            checked & evidence["new_water"] & ~radar & ~extra_debris, max_size=min_pixels - 1)
+        support = ndimage.binary_dilation(radar | extra_debris, np.ones((3, 3)), iterations=2)
+        labels, _ = ndimage.label(candidate_water, structure=np.ones((3, 3)))
+        supported = np.unique(labels[support & candidate_water])
+        extra_water = np.isin(labels, supported[supported > 0])
 
     classes[extra_debris] = CLASS_DEBRIS
     classes[extra_water] = CLASS_WATER

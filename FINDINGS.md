@@ -378,3 +378,76 @@ Reading the scores:
   mapped route of any kind. These are reported separately.
 - Bridges with the 25 m bank rule: 31 of 217 hit (17 high, 14 medium), 4
   exposed.
+
+## Copernicus service failures seen on 10 Oct
+
+All hit within one afternoon; each one would have broken a live demo.
+
+- `429 Too Many Requests` when several requests ran at once (direct
+  downloads and batch job starts). Two optional second-track images were
+  silently skipped in one full-box run because of it.
+- `500 Internal ... ModuleNotFoundError: No module named 'shapely.lib'`: a
+  fault on the Copernicus side, gone on the next try.
+- A 180 MB batch result download dropped at 162 MB (`IncompleteRead`).
+- Fix: every server request now retries up to six times with a growing wait
+  on 429, 5xx and dropped connections. Partial files are written under a
+  `.part` name, so a broken download is never taken for a cached file.
+- Still a risk on judging day: none of this is under our control.
+
+## Recall work under the false-alarm budget (10 Oct, evening)
+
+Rule agreed with the team: a change is allowed only if it has a physical
+reason AND the identical rules, run on images from before the flood, map no
+more than 5% of the flood-pair area. No setting is chosen from an EMSR927
+score. The tool is `backend/tools/false_alarm_scan.py`.
+
+The acceptance test was rebuilt first: it now runs the WHOLE chain (radar,
+optical, growth, flood-path filter) on both pairs, instead of radar and
+optical separately. This is stricter and found a problem the separate tests
+had hidden.
+
+### What changed and why
+
+1. **Growth from the valley floor replaces the hard 20 m height cap.** A
+   debris flood spreads over fans and terraces above the river bed. A
+   patch may now extend up to 60 m above the river, but only as one
+   connected area of change that starts in the 20 m core.
+2. **Second radar track from the opposite side** (orbit 19, descending, 24
+   Aug to 5 Sep), with its own layover and shadow mask. Detections from the
+   two tracks are united. On the small box the part of the corridor no
+   radar can see fell from 23% to 7%.
+3. **Optical-only water switched off.** With the full chain on the full box
+   and one track, optical-only water was 0.43 km2 on the flood pair and 0.37
+   km2 on the no-flood pair: no better than chance. Rivers widen through
+   every monsoon. An intermediate rule (keep optical water only where it
+   touches other evidence) did not help (0.37 km2 remained). Optical water
+   now only confirms radar water.
+4. **"Possibly affected" tier for buildings** within 15 m of a polygon but
+   not touching it, listed separately from "hit".
+
+### Scans on the full box (one radar track, optical-only water still on)
+
+Reach height, no-flood area as a share of flood-pair area:
+
+| Reach above river | Flood pair km2 | No-flood pair km2 | Share |
+|---|---|---|---|
+| 20 m | 5.59 | 0.63 | 11.3% |
+| 30 m | 6.95 | 0.71 | 10.2% |
+| 40 m | 7.51 | 0.83 | 11.1% |
+| 60 m | 7.92 | 0.85 | 10.7% |
+
+The reach height hardly moves the false-alarm share: the flood area and the
+false area grow together. The excess was the optical water (above).
+
+With optical-only water off, at 60 m reach, minimum size of a VV-only
+debris patch:
+
+| Min patch | Flood pair km2 | No-flood pair km2 | Share | In budget |
+|---|---|---|---|---|
+| 3,000 m2 | 7.43 | 0.36 | 4.9% | yes |
+| 10,000 m2 | 7.03 | 0.16 | 2.3% | yes |
+| VH rise always required | 6.42 | 0.07 | 1.0% | yes |
+
+On the small box the mapped area stops growing by itself near 120 m of
+reach (0.30, 0.71, 0.74, 0.74 km2 at 20, 60, 120, 200 m) with 0.000 km2 on
+the no-flood pair at every value.

@@ -103,6 +103,11 @@ class Settings:
     water_index_min: float = 0.0      # MNDWI above this = open water
     water_green_min: float = 0.06     # muddy flood water is bright in green
     optical_min_patch_m2: float = 3000.0
+    # May optical imagery add water that radar did not see? Off by default:
+    # rivers widen through every monsoon, and our no-flood test showed
+    # optical-only "new water" is nearly as large without a flood (0.37 km2)
+    # as with one (0.43 km2). Optical water still CONFIRMS radar water.
+    optical_water_alone: bool = False
 
     # --- Confidence by agreement of sources ---
     score_radar_and_optical: float = 0.9   # high

@@ -83,10 +83,22 @@ def score_confidence(classes, source, checked, already_changing, settings):
     return score
 
 
-def _areas(classes, pixel_m):
+def _areas(fused, pixel_m):
+    """Mapped area by class, and by class and evidence source."""
+    classes, source = fused["classes"], fused["source"]
     pixel_km2 = pixel_m ** 2 / 1e6
-    return {"water_km2": round(float((classes == CLASS_WATER).sum()) * pixel_km2, 3),
-            "debris_km2": round(float((classes == CLASS_DEBRIS).sum()) * pixel_km2, 3)}
+    out = {"water_km2": round(float((classes == CLASS_WATER).sum()) * pixel_km2, 3),
+           "debris_km2": round(float((classes == CLASS_DEBRIS).sum()) * pixel_km2, 3)}
+    names = {SOURCE_RADAR: "radar", SOURCE_RADAR_DISPUTED: "radar", SOURCE_BOTH: "both",
+             SOURCE_OPTICAL: "optical"}
+    detail = {}
+    for class_id, label in ((CLASS_WATER, "water"), (CLASS_DEBRIS, "debris")):
+        for code, name in names.items():
+            key = f"{label}_{name}_km2"
+            detail[key] = detail.get(key, 0.0) + float(
+                ((classes == class_id) & (source == code)).sum()) * pixel_km2
+    out["by_source"] = {k: round(v, 3) for k, v in detail.items()}
+    return out
 
 
 def acceptance_test(radar, evidence, quiet_evidence, zones, pixel_m, settings):
@@ -125,7 +137,7 @@ def acceptance_test(radar, evidence, quiet_evidence, zones, pixel_m, settings):
         compared = ("radar and optical" if flood_ev is not None
                     else "radar only (no earlier optical composite)")
 
-    flood_areas, quiet_areas = _areas(flood["classes"], pixel_m), _areas(quiet["classes"], pixel_m)
+    flood_areas, quiet_areas = _areas(flood, pixel_m), _areas(quiet, pixel_m)
     flood_total = flood_areas["water_km2"] + flood_areas["debris_km2"]
     quiet_total = quiet_areas["water_km2"] + quiet_areas["debris_km2"]
 
