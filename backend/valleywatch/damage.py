@@ -75,40 +75,59 @@ def assess_roads(roads, hazards, settings):
     return pieces[columns].reset_index(drop=True)
 
 
+def _approach_points(line, distance_m):
+    """Points on the bank just beyond each end of a bridge.
+
+    The deck is extended in a straight line past each end by `distance_m`.
+    These points are on land, off the river, where the road meets the bridge.
+    """
+    coords = list(line.coords)
+    points = []
+    for end, inner in ((coords[0], coords[1]), (coords[-1], coords[-2])):
+        dx, dy = end[0] - inner[0], end[1] - inner[1]
+        length = (dx ** 2 + dy ** 2) ** 0.5 or 1.0
+        points.append(Point(end[0] + dx / length * distance_m,
+                            end[1] + dy / length * distance_m))
+    return points
+
+
 def assess_bridges(bridges, hazards, settings):
     """Decide which bridges were hit.
 
-    A bridge crosses the river by design, so change in the water underneath
-    proves nothing. We call a bridge hit only when the hazard reaches the
-    ground at one of its ends (where the deck meets the bank), or when debris
-    covers a large part of the deck itself.
+    A bridge crosses the river by design, so change in the river under the
+    span proves nothing and is never used. We look only at the bank: the
+    ground just beyond each end of the deck. If water or debris covers that
+    ground, the flood rose above the bank at the bridgehead.
+
+        both bridgeheads covered    hit, high confidence
+        one bridgehead covered      hit, medium confidence
+        neither                     not hit ("exposed" if the river below
+                                    changed, "clear" otherwise)
     """
     out = bridges.copy()
     if bridges.empty:
-        return out.assign(hit=False, hazard=None, confidence_level=None, reason=None)
+        return out.assign(hit=False, status=None, hazard=None, confidence_level=None, reason=None)
     everything = hazards.union_all() if not hazards.empty else None
-    debris = hazards[hazards["hazard"] == "debris"]
-    debris_area = debris.union_all() if not debris.empty else None
     rows = []
     for geometry in out.geometry:
         line = geometry if geometry.geom_type == "LineString" else max(geometry.geoms, key=lambda g: g.length)
-        ends = [Point(line.coords[0]), Point(line.coords[-1])]
-        ends_hit = sum(everything is not None and
-                       end.buffer(settings.bridge_end_radius_m).intersects(everything)
-                       for end in ends)
-        covered = (line.intersection(debris_area).length / line.length
-                   if debris_area is not None and line.length > 0 else 0.0)
-        if ends_hit == 2:
-            rows.append((True, "high", "hazard reaches both ends"))
-        elif ends_hit == 1:
-            rows.append((True, "medium", "hazard reaches one end"))
-        elif covered >= settings.bridge_debris_cover:
-            rows.append((True, "low", "debris signal over the deck only"))
+        heads = _approach_points(line, settings.bridge_approach_m)
+        heads_covered = sum(everything is not None and everything.contains(head)
+                            for head in heads)
+        river_changed = everything is not None and line.intersects(everything)
+        if heads_covered == 2:
+            rows.append((True, "hit", "high", "hazard covers the bank at both ends"))
+        elif heads_covered == 1:
+            rows.append((True, "hit", "medium", "hazard covers the bank at one end"))
+        elif river_changed:
+            rows.append((False, "exposed", None,
+                         "river changed under the span, both banks unaffected"))
         else:
-            rows.append((False, None, "no change at either end"))
+            rows.append((False, "clear", None, "no change at the bridge"))
     out["hit"] = [r[0] for r in rows]
-    out["confidence_level"] = [r[1] for r in rows]
-    out["reason"] = [r[2] for r in rows]
+    out["status"] = [r[1] for r in rows]
+    out["confidence_level"] = [r[2] for r in rows]
+    out["reason"] = [r[3] for r in rows]
     # Name the hazard nearest to each hit bridge.
     out["hazard"] = None
     if out["hit"].any():
@@ -152,10 +171,12 @@ def assess_damage(hazards, layers, crs, settings):
         "bridges_total": int(len(bridges)),
         "bridges_hit": int(len(hit_bridges)),
         "bridges_hit_by_confidence": by_level(hit_bridges),
+        # Bridges over a changed river whose banks show no change: not hit.
+        "bridges_exposed_not_hit": int((bridges["status"] == "exposed").sum()),
     }
     building_columns = [c for c in ("osm_id", "building", "name", "hit", "hazard",
                                     "confidence_level", "geometry") if c in buildings.columns]
-    bridge_columns = [c for c in ("osm_id", "highway", "name", "hit", "hazard",
+    bridge_columns = [c for c in ("osm_id", "highway", "name", "hit", "status", "hazard",
                                   "confidence_level", "reason", "length_m", "geometry")
                       if c in bridges.columns]
     return {
