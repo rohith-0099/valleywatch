@@ -114,13 +114,18 @@ class Settings:
     score_optical_only: float = 0.6        # medium
     score_radar_water_unchecked: float = 0.6  # medium: no clear optical view
     score_radar_only: float = 0.3          # low
+    # Water seen ONLY by the second track is also scored low: that track's
+    # after image can be many days late, when river change is no longer
+    # just the flood.
     # Subtracted where the ground was already changing before the flood.
     score_already_changing_penalty: float = 0.3
 
-    # --- Second radar track ---
+    # --- Second radar track ("thorough" mode) ---
     # Also use a track that looks from the opposite side, to see into the
-    # first track's layover and shadow.
-    use_second_track: bool = True
+    # first track's layover and shadow. Off by default: it needs three more
+    # downloads (about 10 minutes more on a large box), too slow for a quick
+    # live run. Switch on with --thorough.
+    use_second_track: bool = False
 
     # --- False-alarm budget ---
     # Rules are loosened only while the same rules, run on images from before

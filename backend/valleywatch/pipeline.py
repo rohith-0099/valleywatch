@@ -33,6 +33,11 @@ def _run_name(bbox, flood_date):
     return f"{flood_date.isoformat()}_" + "_".join(f"{v:.3f}" for v in bbox)
 
 
+def output_name(bbox, flood_date, settings):
+    """Results folder. Thorough runs get their own, so both can be compared."""
+    return _run_name(bbox, flood_date) + ("_thorough" if settings.use_second_track else "")
+
+
 def _read_onto_grid(path, grid):
     """Read a raster and resample it onto the reference grid.
 
@@ -69,7 +74,7 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     report = _timed_progress(progress)
     name = _run_name(bbox, flood_date)
     data_dir = Path(data_dir or REPO_ROOT / "data" / name)
-    output_dir = Path(output_dir or REPO_ROOT / "outputs" / name)
+    output_dir = Path(output_dir or REPO_ROOT / "outputs" / output_name(bbox, flood_date, settings))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- Step 1: choose scenes -------------------------------------------
@@ -188,7 +193,7 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     result.update(fused)
     result["confidence"] = score_confidence(result["classes"], result["source"],
                                             result["checked"], result["already_changing"],
-                                            settings)
+                                            result["water_second_track_only"], settings)
 
     # ---- Acceptance test: the same rules on images from before the flood ----
     report("Running the no-flood acceptance test")
@@ -209,7 +214,8 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     mapped = result["has_data"]
     summary = {
         "inputs": {"bbox_west_south_east_north": list(bbox),
-                   "flood_date": flood_date.isoformat()},
+                   "flood_date": flood_date.isoformat(),
+                   "mode": "thorough" if settings.use_second_track else "quick"},
         "sentinel1": pair,
         "sentinel2": {
             "windows": {side: [start.isoformat(), end.isoformat()]
@@ -278,7 +284,7 @@ def run_damage_and_cutoff(bbox, flood_date, settings=None, data_dir=None, output
     settings = settings or Settings()
     name = _run_name(bbox, flood_date)
     data_dir = Path(data_dir or REPO_ROOT / "data" / name)
-    output_dir = Path(output_dir or REPO_ROOT / "outputs" / name)
+    output_dir = Path(output_dir or REPO_ROOT / "outputs" / output_name(bbox, flood_date, settings))
 
     progress("Checking roads and buildings")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -332,8 +338,11 @@ def main():
     parser.add_argument("--date", required=True, help="Flood date, YYYY-MM-DD")
     parser.add_argument("--large", action="store_true",
                         help="Allow a box above the live-run size (slow batch jobs)")
+    parser.add_argument("--thorough", action="store_true",
+                        help="Also use a second radar track from the opposite side (slower)")
     args = parser.parse_args()
     settings = Settings()
+    settings.use_second_track = args.thorough
     area = fetch.bbox_area_km2(args.bbox)
     if area > settings.max_live_area_km2 and not args.large:
         sys.exit(f"The box covers {area:.0f} km2. Live runs are limited to "

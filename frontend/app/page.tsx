@@ -42,6 +42,7 @@ export default function Dashboard() {
   const [bbox, setBbox] = useState(["", "", "", ""]);
   const [floodDate, setFloodDate] = useState("");
   const [drawing, setDrawing] = useState(false);
+  const [thorough, setThorough] = useState(false);
   const [runs, setRuns] = useState<{ run_id: string }[]>([]);
   const [messages, setMessages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -189,7 +190,7 @@ export default function Dashboard() {
     try {
       const response = await fetch(`${API}/api/analyse`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bbox: bbox.map(Number), flood_date: floodDate }),
+        body: JSON.stringify({ bbox: bbox.map(Number), flood_date: floodDate, thorough }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "The analysis could not start.");
@@ -253,6 +254,7 @@ export default function Dashboard() {
           ))}
         </div>
         <div className="field"><label>Flood date</label><input type="date" value={floodDate} onChange={(e) => setFloodDate(e.target.value)} /></div>
+        <label className="check"><input type="checkbox" checked={thorough} onChange={(e) => setThorough(e.target.checked)} />Thorough: add a second radar track from the opposite side (slower)</label>
         <button className="primary" disabled={!ready || busy} onClick={analyse}>{busy ? "Analysing…" : "Analyse"}</button>
         {error && <p className="error">{error}</p>}
 

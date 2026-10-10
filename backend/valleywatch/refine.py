@@ -59,13 +59,14 @@ def fused_map(water, debris, water_core, evidence, zones, pixel_m, settings):
     return out
 
 
-def score_confidence(classes, source, checked, already_changing, settings):
+def score_confidence(classes, source, checked, already_changing, second_track_only, settings):
     """Confidence from how many independent sources agree.
 
         radar and optical agree            high
         optical only                       medium
         radar-only water, sky not clear    medium (optical could not check)
         radar-only water, optical saw none low
+        radar-only water, second track only low (its image may be days late)
         radar-only debris                  low
         radar disputed by optical          low
 
@@ -74,7 +75,8 @@ def score_confidence(classes, source, checked, already_changing, settings):
     score = np.zeros(classes.shape, dtype=np.float32)
     radar_only = np.isin(source, (SOURCE_RADAR, SOURCE_RADAR_DISPUTED))
     score[radar_only] = settings.score_radar_only
-    unchecked_water = (source == SOURCE_RADAR) & (classes == CLASS_WATER) & ~checked
+    unchecked_water = ((source == SOURCE_RADAR) & (classes == CLASS_WATER) & ~checked
+                       & ~second_track_only)
     score[unchecked_water] = settings.score_radar_water_unchecked
     score[source == SOURCE_OPTICAL] = settings.score_optical_only
     score[source == SOURCE_BOTH] = settings.score_radar_and_optical

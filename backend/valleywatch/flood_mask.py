@@ -204,6 +204,7 @@ def merge_tracks(runs):
     quick-look come from the first (primary) track.
     """
     merged = dict(runs[0])
+    primary_water = runs[0]["water"]
     for other in runs[1:]:
         for key in ("water", "debris", "water_core", "already_changing"):
             merged[key] = merged[key] | other[key]
@@ -215,5 +216,7 @@ def merge_tracks(runs):
             merged["no_flood"] = {key: merged["no_flood"][key] | other["no_flood"][key]
                                   for key in ("water", "debris", "water_core")}
     merged["debris"] = merged["debris"] & ~merged["water"]
+    # Water that only a secondary track saw (used to lower its confidence).
+    merged["water_second_track_only"] = merged["water"] & ~primary_water
     merged["thresholds"] = [run["thresholds"] for run in runs]
     return merged
