@@ -103,7 +103,7 @@ Final Trishuli result (35 x 52 km box, thorough mode): 3.30 km2 water and
 
 Compared with EMSR927 (European Union, Copernicus Emergency Management
 Service data), which is photo-interpreted from 0.3 to 1 m images. Three of
-its areas lie in our box. Validation was run three times in total and never
+its areas lie in our box. Validation was run four times in total (small box, before the recall work, after it, and quick mode) and never
 used to set a parameter.
 
 | Area | Extent recall | Extent precision | IoU | Buildings recall | Roads recall | Bridges found |
