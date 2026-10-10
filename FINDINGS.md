@@ -50,3 +50,36 @@ nothing to work with, which is why radar is the primary source.
   an adaptive threshold of 4.2 dB (the fixed fallback would be 3 dB).
 - Along the river the dominant signal is a backscatter DROP, not a rise.
   Detected area in this box is small (0.009 km2 water, 0.043 km2 debris).
+
+## Full corridor run (85.10 27.85 85.45 28.32, 35 x 52 km, 18.5 M pixels)
+
+- Runtime about 17 minutes: three openEO batch jobs (4.6 + 4.6 + 2.2 min)
+  plus about 1.5 min of local processing. Too slow for a live demo on a large
+  box. Re-runs use the cached rasters and take about 1.5 min. Options: ask
+  judges for a smaller box, run the two image jobs in parallel, or work at
+  20 m.
+- Result: 0.705 km2 new water in 145 polygons, 1.739 km2 debris in 903
+  polygons. 56% of the box is not mappable (steep, layover or shadow).
+- Adaptive thresholds: 3.95 dB (VV) and 4.24 dB (VH).
+- The change image shows a continuous line along the whole river from the
+  north-east corner to the south-west corner, so the flood signal is real.
+- Lower valley (wide floor): detection follows the river well. Water
+  polygons trace the channel; the largest patches sit at bends and
+  confluences.
+- Upper gorge: the signal is visible in the change image but mostly NOT
+  detected. The channel is only a few pixels wide and lies inside the steep
+  or layover mask. Expect low recall there against EMSR927.
+- Debris class is noisy: 892 of 903 debris polygons are low confidence, the
+  median patch is 1,400 m2, and many are isolated specks in the town area
+  and on hillsides. Likely false positives. Candidate fixes: stronger
+  minimum size for debris, require VH to rise as well, or keep only debris
+  connected to the river corridor.
+- A side river in the south-east also shows change. With a 10-day-old before
+  image this may be ordinary monsoon river change, not the flood. The system
+  cannot tell these apart.
+- Bug found and fixed: "permanent water" was first reported as 31.6 km2
+  because dark radar shadow on steep slopes was counted. It is now counted on
+  mappable ground only (5.1 km2), which still includes shadowed gentle
+  ground, so it is an upper bound.
+- No water polygon reaches "high" confidence (97 low, 48 medium). The
+  confidence scale needs calibrating against the reference maps later.

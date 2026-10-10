@@ -127,7 +127,10 @@ def detect_flood_and_debris(before, after, dem, pixel_m, direction, settings):
         "classes": classes, "confidence": confidence,
         "change_vv_db": change["VV"], "change_vh_db": change["VH"],
         "before_vv_db": db["before", "VV"], "after_vv_db": db["after", "VV"],
-        "terrain": terrain, "permanent_water": permanent_water & has_data,
+        "terrain": terrain,
+        # Counted on mappable ground only: on steep ground "dark" is mostly
+        # radar shadow, not water.
+        "permanent_water": permanent_water & usable,
         "has_data": has_data,
         "thresholds": {
             band: {"typical_change_db": round(centre[band], 2),
