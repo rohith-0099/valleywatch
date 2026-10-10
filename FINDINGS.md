@@ -83,3 +83,84 @@ nothing to work with, which is why radar is the primary source.
   ground, so it is an upper bound.
 - No water polygon reaches "high" confidence (97 low, 48 medium). The
   confidence scale needs calibrating against the reference maps later.
+
+## Changes after the first review (10 Oct)
+
+All numbers in this section are raw output. Nothing has been compared with
+EMSR927 yet, so none of this says the result is more ACCURATE, only what
+changed.
+
+### River corridor from the DEM
+
+- Detections are now accepted only on ground less than 40 m above the
+  nearest river cell (HAND, computed with pysheds from the Copernicus DEM;
+  a river cell drains at least 10 km2).
+- pysheds needs numpy below 2.4 (it calls `numpy.in1d`, removed in 2.4).
+  numpy is pinned in requirements.txt.
+- Limitation: the river network is computed inside the box only. A river
+  that enters the box from outside starts with zero upstream area, so its
+  first stretch inside the box may not be recognised as a river. A small box
+  across a big river is affected most.
+- Limitation: real damage away from the valley floor (for example a
+  landslide on a hillside) is no longer reported.
+
+### Small test box (85.30 28.12 85.38 28.20) before and after the changes
+
+| | First version | Now, radar only | Now, with optical |
+|---|---|---|---|
+| Water | 0.009 km2 | 0.042 km2 | 0.073 km2 |
+| Debris | 0.043 km2 | 0.061 km2 | 0.581 km2 |
+
+- (b) Relaxed slope limit in the corridor (45 instead of 30 degrees) plus
+  hysteresis raised radar water from 0.009 to 0.042 km2. Still, 23% of the
+  corridor in this box is invisible to radar (layover or shadow).
+- (c) Pre-event pair 4 Aug to 16 Aug on the same orbit, same rules: 0.000
+  km2 water and 0.026 km2 debris detected with no flood. So normal change
+  explains little of the water signal but up to about 40% of the radar
+  debris area in this box (0.026 against 0.061 km2). Radar debris remains
+  the weakest class. Only 0.005 km2 of detections were down-weighted.
+- (a) Sentinel-2 with per-pixel cloud masking: 70% of the corridor has clear
+  pixels both before and after. The after composite shows the scoured,
+  widened channel plainly along both river branches. Optical confirmed
+  0.042 km2 of radar detections, disputed 0.004 km2, and ADDED 0.52 km2 of
+  debris and 0.031 km2 of water that radar missed. In this gorge most of the
+  mapped debris therefore comes from optical, not radar.
+- The tile-level cloud figures (54 to 97%) were misleading: they would have
+  ruled out every scene, yet most of the valley floor has clear pixels.
+- Caveat: the after composite is the median of clear observations over 24
+  days after the flood. Water that drained within days is under-represented;
+  the optical evidence mostly shows vegetation loss.
+- Caveat: Sentinel-2 values are used as delivered by openEO. We did not
+  check whether the reflectance offset of newer processing baselines is
+  applied. The indices are ratios and thresholds are on differences, so the
+  effect should be small, but it is unverified.
+
+### Speed
+
+- Small box, everything cached: 22 s. Small box, cold: about 1.5 min for the
+  three new downloads (two at a time). Boxes above 400 km2 now need the
+  `--large` flag and use batch jobs.
+
+## OpenStreetMap (ohsome API)
+
+- ohsome holds data up to 27 July 2026, so the snapshot for the Trishuli
+  case is 27 July 2026 (before the event, as the rules require).
+- The snapshot endpoint named in the docs, `/elements/geometry`, answers
+  `403 Forbidden` from the public server (so does `/elements/centroid`),
+  while `/elements/count` and `/elementsFullHistory/geometry` work. We use
+  the history endpoint of the same API over a one-day window and keep the
+  versions still valid at the snapshot date. Check: 2,395 buildings from
+  this route, 2,395 from `/elements/count` for the same box and date.
+- Risk for judging day: this depends on the ohsome server. OSM layers are
+  cached per box, but a new box needs the server to answer.
+
+## Damage overlay, small test box (not validated)
+
+- 144 of 2,395 buildings hit (90 high, 52 medium, 2 low confidence), 4.55 km
+  of 160 km of roads, 7 of 16 bridges.
+- 134 of the 144 buildings are hit by debris, which is mostly the optical
+  vegetation-loss signal. If that signal over-reaches (for example crops or
+  cloud shadow missed by the mask), building counts are too high.
+- Bridge rule: a bridge is hit only when the hazard reaches the bank at one
+  of its ends, or debris covers half the deck. Water change under the span
+  alone does not count.
