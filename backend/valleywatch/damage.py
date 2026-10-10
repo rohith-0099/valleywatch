@@ -124,7 +124,11 @@ def assess_bridges(bridges, hazards, settings):
             for bank in _approach_segments(line, settings.bridge_approach_m):
                 share = bank.intersection(everything).length / bank.length
                 banks_covered += share >= settings.bridge_bank_cover
-        river_changed = everything is not None and line.intersects(everything)
+        # "Exposed" = change in the river right at the bridge (within one
+        # pixel or so of the deck). Not counted as hit, but listed so that
+        # someone can check it.
+        river_changed = (everything is not None
+                         and line.distance(everything) <= settings.possibly_affected_m)
         if banks_covered == 2:
             rows.append((True, "hit", "high", "hazard covers the bank at both ends"))
         elif banks_covered == 1:

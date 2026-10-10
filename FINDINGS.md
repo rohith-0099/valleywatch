@@ -692,3 +692,55 @@ What broke or looks wrong:
 - None of these four results has been compared with a reference map. They
   show that the system runs elsewhere and where its self-check fails; they
   say nothing about accuracy.
+
+## Lowland fix and settlements from buildings (11 Oct)
+
+Both changes are justified by our own no-flood test; no reference map was
+used.
+
+- **Noise level from the pre-event pair.** The change threshold is now
+  three times the noise measured between the two images taken BEFORE the
+  flood, which cannot contain the flood. Before, the noise came from the
+  flood pair itself, which is wrong when much of the area flooded. The
+  typical change is re-centred on unchanged ground. On the Trishuli boxes
+  the thresholds moved by less than 0.15 dB and the mapped areas by under
+  1%, so the EMSR927 scores were not re-measured.
+- **Debris class off on plains.** Where the valley floor covers at least
+  half of the area, only water is mapped.
+- Kerala after both changes: 31.1 km2 water, no debris, no-flood share 4.9%
+  (was 17.3%), inside the budget.
+- Kerala's threshold is still at its 6 dB ceiling: the pre-event pair is
+  itself that noisy (wet paddies). Weak flooding is still missed there.
+- **Settlements derived from buildings.** When a box has no settlement
+  points in OpenStreetMap, buildings within 150 m of each other are
+  grouped and each group of 5 or more becomes an unnamed settlement, marked
+  as derived. Sikkim box: 18 derived settlements, 16 without a vehicle road,
+  12 with no route at all. Not validated; a derived settlement can be half
+  of a real village or two villages merged.
+
+## Chamoli: why zero bridges and zero cut-off settlements
+
+No reference map could be found in the time allowed: Copernicus EMS had no
+activation for this event, and a search of the Humanitarian Data Exchange
+found no vector product. So this is a diagnosis from our own outputs.
+
+- The flood IS detected at both known sites: polygons lie within 120 m of
+  the Rishiganga plant at Raini and within 33 m of the Tapovan barrage.
+- The map is nearly empty there. OpenStreetMap on 6 Feb 2021 holds 41 roads
+  (64 km), 4 bridges and 104 buildings in 204 km2. 17 of 33 settlements are
+  not on any mapped vehicle road and 11 are on no mapped route at all, so
+  they cannot be reported as cut off whatever happens.
+- Two of the four bridges are 6 m from a flood polygon and were reported
+  "clear". The flood stayed in the gorge channel; the banks at the
+  bridgeheads show no change, and our rule needs the bank covered. The real
+  bridge at Raini was washed away. **Our bridge rule cannot see a bridge
+  swept off by flow that stays under the span, which is the usual way a
+  gorge flood destroys a bridge.** This was the price of not flagging every
+  bridge that crosses a changed river.
+- Only 0.29 km of road lies inside the polygons (1.78 km within 50 m): the
+  road runs above the gorge.
+- Change made: a bridge with river change within 15 m of its deck is now
+  listed as "exposed" (to be checked), still not counted as hit and not
+  removed from the road network. Chamoli now lists 2 exposed bridges.
+- Idea not built: a second cut-off scenario, "if the exposed bridges are
+  also down", shown next to the main one and labelled as a what-if.
