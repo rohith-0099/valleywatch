@@ -99,11 +99,16 @@ This test changed the design several times:
 Final Trishuli result (35 x 52 km box, thorough mode): 3.30 km2 water and
 4.78 km2 debris, with 0.33 km2 mapped on the no-flood pair (3.8%).
 
+![No-flood test by event](figures/no_flood_test.png)
+
+*Figure 1. Area mapped when there is no flood, as a share of the flood-pair
+area, before and after the fixes this test led to.*
+
 ## 5. Case study: Trishuli flood of 26 August 2026
 
 Compared with EMSR927 (European Union, Copernicus Emergency Management
 Service data), which is photo-interpreted from 0.3 to 1 m images. Three of
-its areas lie in our box. Validation was run four times in total (small box, before the recall work, after it, and quick mode) and never
+its areas lie in our box. Validation was run five times in total and never
 used to set a parameter.
 
 | Area | Extent recall | Extent precision | IoU | Buildings recall | Roads recall | Bridges found |
@@ -114,13 +119,20 @@ used to set a parameter.
 
 Thorough mode. Quick mode scores 2 to 8 points lower on extent recall.
 
+![ValleyWatch against EMSR927](figures/emsr927_overlay.png)
+
+*Figure 2. Our map against the reference in a gorge area (left) and the wide
+valley (right). European Union, Copernicus Emergency Management Service data.*
+
 What we map is almost always inside the reference area; we find about a
 third of it in the gorge and two thirds in the wide valley. Before the
 recall work (section 4) the gorge recall was 0.16.
 
 Cut-off result for the full box: 47 of 182 settlements lost their vehicle
 road (about 12,800 buildings) and 9 lost every route. We have no reference
-for this figure.
+for this figure. Next to it the system shows a what-if result, labelled as
+an assumption: the same analysis if bridges with flood change at the deck,
+but none on the banks, are also down.
 
 ## 6. Other events
 
@@ -137,7 +149,7 @@ maps were used, so these show that the system runs, not that it is right.
 ## 7. AI component: situation-report copilot
 
 The language model (Groq, `openai/gpt-oss-120b`) knows nothing about the
-event. It can only call eight functions that read the output files of a run.
+event. It can only call nine functions that read the output files of a run.
 
 **It may not type a number.** Each fact arrives with a placeholder such as
 `{buildings_hit}`; the model writes the placeholder and code fills in the
@@ -164,6 +176,11 @@ route. The scenes used and the last satellite pass are always visible.
 Bonus: click any point and the flood path runs down the valley on the DEM,
 listing the settlements along it.
 
+![Dashboard](figures/dashboard.png)
+
+*Figure 3. Dashboard after a live run near Betrawati: flood and debris,
+damage, a cut-off settlement with its lost route, and the what-if box.*
+
 ## 9. Limitations
 
 - **Not a warning system.** Sentinel-1 revisits every 6 to 12 days. The
@@ -174,7 +191,8 @@ listing the settlements along it.
   banks, so that a bridge is not flagged merely for crossing a flooded
   river. At Chamoli the flood stayed in the channel and the bridge at
   Raini, 6 m from our polygon, was reported as only "exposed". With it the
-  cut-off analysis failed too.
+  cut-off analysis failed too: 0 settlements cut off, against 3 without a
+  vehicle road and 5 without any route in the what-if result.
 - **OpenStreetMap decides the damage numbers.** Kerala 2018: 28 buildings
   mapped in 274 km2. Chamoli 2021: half of the settlements are on no mapped
   road. Missing features cannot be reported as damaged.

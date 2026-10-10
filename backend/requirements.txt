@@ -23,3 +23,5 @@ pytest
 fastapi
 uvicorn
 httpx
+# Report build (docs/build_report.py)
+markdown

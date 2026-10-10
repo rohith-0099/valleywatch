@@ -35,7 +35,7 @@ def overlay_figure(run, activation, reference_folder, out_path, products=("AOI01
 
     chosen = [p for p in download_reference(activation, reference_folder)
               if any(tag in p["product"] for tag in products)]
-    fig, axes = plt.subplots(1, len(chosen), figsize=(7.2, 3.9), constrained_layout=True)
+    fig, axes = plt.subplots(1, len(chosen), figsize=(7.2, 4.2), constrained_layout=True)
     for axis, product in zip(axes, chosen):
         area = _layer(product["folder"], "areaOfInterestA", crs).union_all().intersection(run_box)
         reference = _layer(product["folder"], "observedEventA", crs).union_all().intersection(area)
@@ -59,8 +59,9 @@ def overlay_figure(run, activation, reference_folder, out_path, products=("AOI01
             Patch(color=OURS_ONLY, label=f"ours only  {km2['ours']:.2f} km²"),
         ], loc="lower center", bbox_to_anchor=(0.5, -0.22), fontsize=7.5, frameon=False)
     fig.suptitle("ValleyWatch against the EMSR927 reference (thorough mode)", fontsize=10, color=INK)
-    fig.text(0.5, 0.005, ATTRIBUTION + ". Contains modified Copernicus Sentinel data 2026.",
-             ha="center", fontsize=6.5, color=MUTED)
+    # As an axis-level label, the layout engine keeps it clear of the legends.
+    fig.supxlabel(ATTRIBUTION + ". Contains modified Copernicus Sentinel data 2026.",
+                  fontsize=6.5, color=MUTED)
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
     return out_path

@@ -753,3 +753,32 @@ found no vector product. So this is a diagnosis from our own outputs.
   settlements, in 2.8 s.
 - It shows where water would run, not how far a flood would reach or how
   deep. It stops at the box edge.
+
+## Bridge what-if scenario (11 Oct)
+
+- Built as planned: the cut-off analysis is run a second time ASSUMING that
+  every "exposed" bridge (flood change within 15 m of the deck, banks
+  unchanged) is down as well. The result is shown beside the main one in
+  the dashboard, the report and the copilot, always labelled as an
+  assumption. It never changes the main figures.
+- Chamoli: main result 0 settlements cut off; what-if with its 2 exposed
+  bridges: 3 without a vehicle road and 5 with no route at all. This is the
+  case the what-if was built for.
+- Every other run: the what-if equals the main result. Trishuli full box has
+  9 exposed bridges, but taking them out isolates no further settlement.
+- So the what-if matters where the map is thin and one bridge carries
+  everything, and adds nothing where the flood already hit the banks.
+
+## EMSR927 re-measured after the lowland and noise changes (no tuning)
+
+Thorough run, current code. European Union, Copernicus Emergency Management
+Service data.
+
+| Area | Extent recall before / now | Precision before / now | Buildings found before / now | Bridges found before / now |
+|---|---|---|---|---|
+| Syapru Besi | 0.381 / 0.379 | 0.992 / 0.992 | 198 / 198 of 355 | 4 / 4 of 5 |
+| Timure | 0.333 / 0.333 | 0.993 / 0.992 | 210 / 209 of 405 | 0 / 0 of 1 |
+| Bidur (update) | 0.639 / 0.638 | 0.949 / 0.949 | 1676 / 1675 of 2725 | 16 / 16 of 24 |
+
+Nothing regressed; differences are in the third decimal. EMSR927 has now
+been measured five times in total and never used to set a parameter.
