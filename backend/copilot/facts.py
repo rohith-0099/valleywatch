@@ -27,6 +27,14 @@ class RunFacts:
             rows.append(row)
         return rows
 
+    @staticmethod
+    def _derived_label(settlement):
+        """Name for a settlement that was derived from building clusters."""
+        if settlement.get("derived"):
+            return (f"unnamed building cluster near {settlement.get('latitude')} N, "
+                    f"{settlement.get('longitude')} E")
+        return None
+
     # ---- Functions offered to the model --------------------------------------
 
     def get_overview(self):
@@ -96,7 +104,7 @@ class RunFacts:
         chosen = [s for s in self.settlements if s.get(f"cut_off_{level}")]
         chosen.sort(key=lambda s: -(s.get("buildings") or 0))
         rows = [{
-            "name": s.get("name"), "name_english": s.get("name_en"),
+            "name": s.get("name") or self._derived_label(s), "name_english": s.get("name_en"),
             "buildings": s.get("buildings"),
             "route_to_town": s.get(f"{level}_town_status"),
             "route_to_hospital": s.get(f"{level}_hospital_status"),

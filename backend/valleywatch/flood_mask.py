@@ -51,38 +51,58 @@ def filtered_db(image, settings):
             for band in BANDS}
 
 
-def adaptive_threshold(change_db, usable, settings):
+def noise_level(change_db, usable):
+    """Robust spread (dB) of a change image: 1.4826 x median absolute deviation."""
+    values = change_db[usable & np.isfinite(change_db)]
+    if values.size < 1000:
+        return None
+    return 1.4826 * float(np.median(np.abs(values - np.median(values))))
+
+
+def adaptive_threshold(change_db, usable, settings, noise_db=None):
     """Pick the change threshold (dB) for this particular image.
 
-    Most of any image did not flood, so the bulk of the change values is just
-    noise plus an overall shift (for example wetter soil after rain). We
-    measure that with the median and the MAD, which a small flooded fraction
-    cannot distort, and call a pixel changed when it is `noise_sigmas` beyond.
+    A pixel counts as changed when its change is `noise_sigmas` times the
+    noise level away from the typical change of unchanged ground.
+
+    noise_db: noise level measured on a pair of images from BEFORE the flood.
+    That pair cannot contain the flood, so it gives the true noise even when
+    much of the area flooded. Without it the noise is estimated from the
+    flood pair itself, which is only sound if most of the image did not flood.
     Returns (centre, threshold).
     """
     values = change_db[usable & np.isfinite(change_db)]
     if values.size < 1000:
         return 0.0, settings.min_change_db
     centre = float(np.median(values))
-    sigma = 1.4826 * float(np.median(np.abs(values - centre)))
+    sigma = noise_db if noise_db is not None else 1.4826 * float(np.median(np.abs(values - centre)))
     threshold = settings.noise_sigmas * sigma
-    threshold = min(max(threshold, settings.min_change_db), settings.max_change_db)
-    return centre, float(threshold)
+    threshold = float(min(max(threshold, settings.min_change_db), settings.max_change_db))
+    # Re-centre on ground that did not change, so that a large flooded area
+    # does not drag the "typical change" towards itself.
+    unchanged = values[np.abs(values - centre) < threshold]
+    if unchanged.size >= 1000:
+        centre = float(np.median(unchanged))
+    return centre, threshold
 
 
-def scaled_change(earlier_db, later_db, usable, settings):
+def scaled_change(earlier_db, later_db, usable, settings, noise=None):
     """Log-ratio change (later minus earlier, in dB) and its scaled form z.
 
     z = 1 means "exactly at this image's threshold", z = 2 twice as strong.
+    noise: optional {band: noise level in dB} from a pre-event pair.
     Returns (change, z, thresholds), the first two as dicts per band.
     """
     change, z, thresholds = {}, {}, {}
     for band in BANDS:
         change[band] = later_db[band] - earlier_db[band]
-        centre, threshold = adaptive_threshold(change[band], usable, settings)
+        centre, threshold = adaptive_threshold(change[band], usable, settings,
+                                               noise.get(band) if noise else None)
         z[band] = (change[band] - centre) / threshold
         thresholds[band] = {"typical_change_db": round(centre, 2),
-                            "threshold_db": round(threshold, 2)}
+                            "threshold_db": round(threshold, 2),
+                            "noise_from": "pre-event pair" if noise and noise.get(band)
+                                          else "flood pair"}
     return change, z, thresholds
 
 
@@ -151,7 +171,16 @@ def detect_flood_and_debris(before, after, terrain, corridor, reach, pixel_m, se
     # there is kept is decided later (it must connect to the valley floor).
     allowed = usable & reach
 
-    change, z, thresholds = scaled_change(before_db, after_db, usable, settings)
+    # Noise level: from the pre-event pair when there is one (see
+    # `adaptive_threshold`), otherwise from the flood pair itself.
+    baseline_db = base_ok = noise = None
+    if baseline is not None:
+        baseline_db = filtered_db(baseline, settings)
+        base_ok = usable & np.isfinite(baseline_db["VV"]) & np.isfinite(baseline_db["VH"])
+        noise = {band: noise_level(before_db[band] - baseline_db[band], base_ok)
+                 for band in BANDS}
+
+    change, z, thresholds = scaled_change(before_db, after_db, usable, settings, noise)
     dark_before = dark_like_water(before_db, settings)
     water, debris, water_strength, _ = classify_change(
         z, allowed, dark_before, pixel_m, settings)
@@ -173,9 +202,7 @@ def detect_flood_and_debris(before, after, terrain, corridor, reach, pixel_m, se
     if baseline is not None:
         # The same rules applied to two images from BEFORE the flood. Anything
         # found there is normal change (rain, river level, farming).
-        baseline_db = filtered_db(baseline, settings)
-        base_ok = usable & np.isfinite(baseline_db["VV"]) & np.isfinite(baseline_db["VH"])
-        _, base_z, base_thresholds = scaled_change(baseline_db, before_db, base_ok, settings)
+        _, base_z, base_thresholds = scaled_change(baseline_db, before_db, base_ok, settings, noise)
         base_water, base_debris, base_strength, _ = classify_change(
             base_z, base_ok & reach, dark_like_water(baseline_db, settings),
             pixel_m, settings)

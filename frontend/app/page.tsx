@@ -356,7 +356,7 @@ export default function Dashboard() {
             const p = f.properties;
             return (
               <button key={p.osm_id} className={`settle ${p.cut_off_any ? "all" : ""} ${picked === p.osm_id ? "picked" : ""}`} onClick={() => pickSettlement(f)}>
-                <div className="name">{p.name ?? "Unnamed settlement"}{p.name_en ? ` · ${p.name_en}` : ""}</div>
+                <div className="name">{p.name ?? (p.derived ? "Building cluster (no name mapped)" : "Unnamed settlement")}{p.name_en ? ` · ${p.name_en}` : ""}</div>
                 <div className="meta">
                   <span className={`tag ${p.cut_off_any ? "all" : "vehicle"}`}>{p.cut_off_any ? "no route at all" : "no vehicle road"}</span>
                   {p.buildings} buildings · town was {p.vehicle_town_km_before ?? p.any_town_km_before ?? "?"} km
@@ -364,7 +364,7 @@ export default function Dashboard() {
               </button>
             );
           })}
-          {cut && <p className="hint">{cut.town_destination}. Roads outside the box: {cut.roads_outside_box}. {cut.no_vehicle_road.had_no_vehicle_road_before} settlements had no mapped vehicle road even before the flood.</p>}
+          {cut && <p className="hint">Settlements: {cut.settlement_source}. Destination: {cut.town_destination}. Roads outside the box: {cut.roads_outside_box}. {cut.no_vehicle_road.had_no_vehicle_road_before} settlements had no mapped vehicle road even before the flood.</p>}
 
           {cut && (<>
           <h2>Ask the copilot</h2>

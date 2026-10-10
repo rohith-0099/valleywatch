@@ -135,6 +135,31 @@ def _is_missing(node):
     return node is None or (isinstance(node, float) and pd.isna(node))
 
 
+def settlements_from_buildings(buildings, settings):
+    """Stand-in settlements where the map has no settlement points.
+
+    Buildings closer together than `cluster_distance_m` are grouped; each
+    group of enough buildings becomes one settlement at the group's centre.
+    These are marked as derived and have no name.
+    """
+    centres = buildings.geometry.centroid
+    # Circles of half the distance touch exactly when two buildings are
+    # within the full distance of each other; merged circles are the groups.
+    merged = centres.buffer(settings.cluster_distance_m / 2).union_all()
+    groups = list(merged.geoms) if merged.geom_type == "MultiPolygon" else [merged]
+    areas = gpd.GeoDataFrame(geometry=groups, crs=buildings.crs)
+    members = gpd.sjoin(gpd.GeoDataFrame(geometry=centres, crs=buildings.crs), areas,
+                        predicate="within")
+    rows = []
+    for group, part in members.groupby("index_right"):
+        if len(part) >= settings.cluster_min_buildings:
+            rows.append({"osm_id": f"derived/{len(rows) + 1}", "name": None,
+                         "place": "derived from buildings", "derived": True,
+                         "geometry": part.geometry.union_all().centroid})
+    return gpd.GeoDataFrame(rows, columns=["osm_id", "name", "place", "derived", "geometry"],
+                            geometry="geometry", crs=buildings.crs)
+
+
 def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settings):
     """Run the cut-off analysis.
 
@@ -168,6 +193,13 @@ def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settin
     # Settlements are judged only inside the box, where the flood was mapped.
     settlements = of_kind(box_places, SETTLEMENT_PLACES)
     settlements = settlements[settlements.within(box_polygon)].copy()
+    settlements["derived"] = False
+    settlement_source = "OpenStreetMap place points"
+    if settlements.empty and len(buildings):
+        # No settlement points mapped here: fall back to building clusters.
+        settlements = settlements_from_buildings(buildings, settings)
+        settlements = settlements[settlements.within(box_polygon)].copy()
+        settlement_source = "derived by clustering OpenStreetMap buildings (no place points mapped)"
     towns = of_kind(wide_places, TOWN_PLACES)
 
     # Size of each settlement: buildings closest to it, within a radius.
@@ -201,6 +233,7 @@ def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settin
     for index, place in settlements.iterrows():
         row = {"osm_id": place.get("osm_id"), "name": place.get("name"),
                "name_en": place.get("name:en"), "place": place.get("place"),
+               "derived": bool(place.get("derived", False)),
                "buildings": int(place["buildings"]), "geometry": place.geometry}
         for level in LEVELS:
             node = snapped[level].get(index)
@@ -247,7 +280,8 @@ def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settin
                                                     row[f"{level}_hospital_status"])
         rows.append(row)
 
-    columns = ["osm_id", "name", "name_en", "place", "buildings", "cut_off_any", "cut_off_vehicle"]
+    columns = ["osm_id", "name", "name_en", "place", "derived", "buildings", "cut_off_any",
+               "cut_off_vehicle"]
     for level in LEVELS:
         for name in DESTINATIONS:
             columns += [f"{level}_{name}_{suffix}"
@@ -269,6 +303,7 @@ def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settin
 
     totals = {
         "settlements_in_box": int(len(result)),
+        "settlement_source": settlement_source,
         "no_vehicle_road": {
             "settlements": int(len(flagged("cut_off_vehicle"))),
             "buildings": int(flagged("cut_off_vehicle")["buildings"].sum()),

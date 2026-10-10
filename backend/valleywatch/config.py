@@ -120,6 +120,20 @@ class Settings:
     # Subtracted where the ground was already changing before the flood.
     score_already_changing_penalty: float = 0.3
 
+    # --- Plains ---
+    # Where the valley floor (core corridor) covers at least this share of
+    # the area, the terrain is a plain, not a valley. There the debris class
+    # is switched off: fields change roughness and greenness between any two
+    # dates, and our no-flood test on a lowland flood found MORE "debris"
+    # without a flood (3.98 km2) than with one (2.96 km2).
+    plain_corridor_share: float = 0.5
+
+    # --- Settlements derived from buildings ---
+    # Used only when OpenStreetMap has no settlement points in the box.
+    # Buildings closer than this form one cluster; small clusters are ignored.
+    cluster_distance_m: float = 150.0
+    cluster_min_buildings: int = 5
+
     # --- Second radar track ("thorough" mode) ---
     # Also use a track that looks from the opposite side, to see into the
     # first track's layover and shadow. Off by default: it needs three more

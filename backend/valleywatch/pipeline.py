@@ -189,6 +189,23 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
                              + "; ".join(str(paths[k]) for k in ("s2_before", "s2_after")
                                          if not available(k))}
 
+    # ---- Plain or valley? ----------------------------------------------------
+    # On a plain the debris class is noise (see `plain_corridor_share`), so
+    # both of its sources are switched off, for the flood pair and for the
+    # no-flood pair alike.
+    mapped_pixels = max(int(result["has_data"].sum()), 1)
+    corridor_share = float((corridor & result["has_data"]).sum()) / mapped_pixels
+    is_plain = corridor_share >= settings.plain_corridor_share
+    if is_plain:
+        report("Flat terrain: mapping water only (debris class switched off)")
+        for masks in (result, result["no_flood"] or {}):
+            for key in ("debris", "debris_before_pruning"):
+                if key in masks:
+                    masks[key] = np.zeros_like(masks[key])
+        for optical in (evidence, quiet_evidence):
+            if optical is not None:
+                optical["vegetation_loss"] = np.zeros_like(optical["vegetation_loss"])
+
     # ---- Final map: combine sources, grow from the valley floor, keep the
     # ---- connected flood path, score confidence ------------------------------
     report("Building the final map")
@@ -230,6 +247,9 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
                  "width": grid["width"], "height": grid["height"]},
         "thresholds": result["thresholds"],
         "radar_orbits_used": tracks_used,
+        "terrain": {"type": "plain" if is_plain else "valley",
+                    "valley_floor_share_of_area": round(corridor_share, 3),
+                    "debris_class": "off (flat terrain)" if is_plain else "on"},
         "river_min_catchment_km2": zones["river_min_catchment_km2"],
         "acceptance_test": acceptance,
         "totals": {
