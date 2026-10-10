@@ -47,6 +47,17 @@ def _show(value):
     return str(value)
 
 
+def _unit(key):
+    """Unit that belongs to a fact, read from the end of its name."""
+    if key.endswith("_km2"):
+        return " km²"
+    if key.endswith("_km"):
+        return " km"
+    if "percent" in key:
+        return "%"
+    return ""
+
+
 def _name(row, words):
     name, english = row.get("name"), row.get("name_english")
     if name and english and english != name:
@@ -92,8 +103,11 @@ def to_slots(function, arguments, result, language):
     view, registry = {}, {}
 
     def add(key, value):
-        registry[key] = _show(value)
-        return {"value": value, "write_this": "{" + key + "}"}
+        # The unit is part of the filled-in text, so it cannot be left off
+        # or changed by the model.
+        registry[key] = _show(value) + (_unit(key) if not isinstance(value, str) else "")
+        return {"value": value, "unit_included": _unit(key).strip() or None,
+                "write_this": "{" + key + "}"}
 
     rows_key, kind, prefix = LISTS.get(function, (None, None, None))
     if function == "list_cut_off_settlements":
@@ -115,7 +129,12 @@ def to_slots(function, arguments, result, language):
                          if isinstance(item, (int, float, str))}
         elif isinstance(value, list):
             name = f"{prefix + '_' if prefix else ''}{key}"
-            registry[name] = "\n".join(f"- {item}" for item in value)
+            # Short lists of numbers (a bounding box) read best on one line;
+            # lists of sentences become bullet points.
+            if all(isinstance(item, (int, float)) for item in value):
+                registry[name] = ", ".join(_show(item) for item in value)
+            else:
+                registry[name] = "\n".join(f"- {item}" for item in value)
             view[key] = {"items": value, "write_this": "{" + name + "}"}
         elif isinstance(value, (int, float)) and not isinstance(value, bool):
             view[key] = add(f"{prefix + '_' if prefix else ''}{key}", value)

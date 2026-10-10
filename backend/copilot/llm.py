@@ -24,7 +24,8 @@ Rules you must follow:
    with a "write_this" placeholder in curly braces, for example {{buildings_hit}}.
    Write the placeholder exactly; the system replaces it with the value. Lists
    have one placeholder per row and one for the whole list: use those, do not
-   retype names with numbers.
+   retype names with numbers. Units (km², km, %) are already inside the
+   placeholder: do not add them again.
 3. Do no arithmetic: no sums, differences, percentages or estimates of your own.
 4. If the functions do not contain the answer, say that the data does not
    contain it. Never guess. Never give population figures.
