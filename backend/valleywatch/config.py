@@ -93,5 +93,14 @@ class Settings:
     max_live_area_km2: float = 400.0
     parallel_downloads: int = 2       # concurrent requests the free tier allows
 
+    # --- Damage overlay ---
+    # Map positions are uncertain by about one 10 m pixel, so a feature this
+    # close to a hazard polygon is reported as a low-confidence hit.
+    feature_tolerance_m: float = 10.0
+    min_road_hit_m: float = 10.0      # shorter overlaps are pixel-edge noise
+    # A bridge counts as hit when the hazard reaches one of its ends.
+    bridge_end_radius_m: float = 15.0
+    bridge_debris_cover: float = 0.5  # or when debris covers this share of it
+
     # --- Clean-up ---
     min_patch_m2: float = 1000.0     # 10 pixels; smaller patches are speckle
