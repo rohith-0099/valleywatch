@@ -69,7 +69,7 @@ class Settings:
     #   the core height cuts real deposits off. The reach was set with the
     #   false-alarm budget below, not by eye.
     corridor_core_hand_m: float = 20.0
-    corridor_reach_hand_m: float = 60.0
+    corridor_reach_hand_m: float = 120.0
     # Inside the corridor the slope limit is relaxed: in a gorge the 30 m DEM
     # blurs the river bed into the valley walls and makes it look steep.
     corridor_max_slope_deg: float = 45.0
@@ -89,7 +89,7 @@ class Settings:
     # --- Debris rule ---
     # A VV rise alone is kept only for patches at least this large; smaller
     # patches must also show a VH rise.
-    debris_large_patch_m2: float = 3000.0
+    debris_large_patch_m2: float = 10000.0
 
     # --- Sentinel-2 check ---
     s2_reflectance_scale: float = 10000.0  # stored value / scale = reflectance

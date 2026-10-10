@@ -451,3 +451,57 @@ debris patch:
 On the small box the mapped area stops growing by itself near 120 m of
 reach (0.30, 0.71, 0.74, 0.74 km2 at 20, 60, 120, 200 m) with 0.000 km2 on
 the no-flood pair at every value.
+
+### Final scans with both radar tracks (full box, optical-only water off)
+
+| Reach | Min VV-only debris patch | Flood pair km2 | No-flood pair km2 | Share | In budget |
+|---|---|---|---|---|---|
+| 60 m | 3,000 m2 | 9.20 | 0.71 | 7.7% | no |
+| 60 m | 10,000 m2 | 8.44 | 0.33 | 3.9% | yes |
+| 120 m | 3,000 m2 | 9.40 | 0.71 | 7.6% | no |
+| 120 m | 10,000 m2 | 8.62 | 0.33 | 3.8% | yes |
+
+- The second track adds real area but also its own noise, so the 3,000 m2
+  debris rule that passed with one track (4.9%) fails with two (7.7%).
+- **Chosen defaults: reach 120 m, VV-only debris patch at least 10,000 m2.**
+  This is the loosest combination tested that stays within the 5% budget.
+- Honest detail: the budget is met on the TOTAL (3.8%). Water alone is at
+  7.6% (0.252 of 3.321 km2), debris at 1.4%. The second track's after image
+  is from 5 September, ten days after the flood, so part of its water
+  change is ordinary river change.
+- Small box with the same defaults: 0.696 km2 mapped, 0.000 km2 on the
+  no-flood pair.
+
+### EMSR927 before and after the recall work
+
+European Union, Copernicus Emergency Management Service data. Validation was
+run once before this work and once after it. Nothing was adjusted between
+the second run and this table.
+
+Event extent:
+
+| Area | Recall before | Recall after | Precision before | Precision after | IoU before | IoU after |
+|---|---|---|---|---|---|---|
+| Syapru Besi (gorge) | 0.163 | 0.381 | 0.998 | 0.992 | 0.163 | 0.379 |
+| Timure (gorge, border) | 0.212 | 0.333 | 0.997 | 0.993 | 0.211 | 0.332 |
+| Bidur, monitoring update | 0.477 | 0.639 | 0.984 | 0.949 | 0.473 | 0.617 |
+| Bidur, first product | 0.478 | 0.641 | 0.835 | 0.804 | 0.437 | 0.554 |
+
+Damage, against "destroyed" and "damaged" in the reference:
+
+| Area | Buildings recall before / after / after incl. "possibly affected" | Buildings precision before / after | Roads recall before / after | Bridges found before / after |
+|---|---|---|---|---|
+| Syapru Besi | 0.18 / 0.56 / 0.67 | 0.74 / 0.90 | 0.35 / 0.58 | 2 of 5 / 4 of 5 |
+| Timure | 0.17 / 0.52 / 0.63 | 0.59 / 0.86 | 0.17 / 0.33 | 0 of 1 / 0 of 1 |
+| Bidur (update) | 0.49 / 0.62 / 0.70 | 0.84 / 0.84 | 0.51 / 0.72 | 14 of 24 / 16 of 24 |
+
+- Recall rose everywhere, most in the gorge, and precision stayed above
+  0.94 against the most complete reference products.
+- The system is still conservative: it finds about a third of the reference
+  area in the gorge and two thirds in the lower valley. The remaining gap
+  in the gorge is mostly the outer part of the deposit, where no source
+  shows a clear change at 10 m.
+- Timure bridges: still 0 of 1 found and 0 of 3 of ours confirmed. Not
+  investigated.
+- The "possibly affected" tier adds 8 to 11 points of building recall for
+  3 to 4 points of precision.

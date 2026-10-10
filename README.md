@@ -16,13 +16,15 @@ IIT Mandi), Track B: Mapping Flood Damage from Space.
 | 4. Damage overlay (OpenStreetMap buildings, roads, bridges) | working |
 | 5. Cut-off settlement analysis | working |
 | 6. Copilot and situation report (English, Nepali) | not started |
-| 7. Validation against EMSR927 | not started |
+| 7. Validation against EMSR927 | working (scores in FINDINGS.md) |
 | 8. Flood-path tracing | not started |
-| Dashboard | not started |
+| Dashboard (map, layers, totals, cut-off list, live progress) | working |
+| Dashboard report button, swipe slider, flood path | not started |
 
 ## Prerequisites
 
 - Python 3.12
+- Node.js 20 or newer (dashboard)
 - A free Copernicus Data Space account: https://dataspace.copernicus.eu
 
 ## Setup
@@ -67,6 +69,41 @@ Outputs go to `outputs/<date>_<bbox>/`:
 | `summary.json` | scenes used and why, thresholds, acceptance test, all totals |
 | `quicklook.png`, `classes.tif` | picture and raster of the result |
 
+## Dashboard
+
+Two terminals:
+
+```bash
+cd backend && ../.venv/bin/uvicorn api:app --port 8000
+cd frontend && npm install && npm run dev      # http://localhost:3000
+```
+
+Draw a box (up to 400 km2), pick the flood date, press Analyse. Finished runs
+can be reopened from the "Earlier runs" list. The base map is for display
+only; the analysis uses the pre-event OpenStreetMap snapshot.
+
+## Validation (reference maps, checking only)
+
+```bash
+cd backend
+../.venv/bin/python -m validation.emsr927 --run ../outputs/<run folder>
+```
+
+This downloads the Copernicus EMS products for EMSR927 and writes overlap
+scores next to the run. The pipeline never imports this module.
+Attribution: European Union, Copernicus Emergency Management Service data.
+
+## False-alarm budget
+
+Rules are loosened only while the same rules, run on images from before the
+flood, map at most 5% of the flood-pair area:
+
+```bash
+cd backend
+../.venv/bin/python -m tools.false_alarm_scan --bbox W S E N --date YYYY-MM-DD \
+    --setting corridor_reach_hand_m --values 20 60 120
+```
+
 ## Tests
 
 ```bash
@@ -84,13 +121,16 @@ cd backend && ../.venv/bin/python -m pytest
    Sentinel-2 composites (clouds removed per pixel with the scene
    classification band). Requests run in parallel.
 3. **Terrain** (`terrain.py`, `corridor.py`): steep slopes, radar shadow and
-   layover are excluded. The river corridor (ground within 20 m of height
-   above the river) is derived from the DEM with flow routing.
+   layover are excluded. The river zones are derived from the DEM with flow
+   routing: a core within 20 m of height above the river, and a reach zone
+   up to 120 m into which a detection may grow from the core. A second
+   radar track looking from the opposite side fills blind zones.
 4. **Radar detection** (`flood_mask.py`): Lee speckle filter, change in dB, a
    threshold that adapts to each area, hysteresis. Both bands drop = new
    water; VV rises = debris. Water already present before is removed.
-5. **Optical check** (`optical.py`): vegetation loss and new water from
-   Sentinel-2, where both dates are clear and the pixel is not in shadow.
+5. **Optical check** (`optical.py`): vegetation loss from Sentinel-2, where
+   both dates are clear and the pixel is not in shadow, can add debris that
+   radar missed. Optical water only confirms radar water.
 6. **Flood path and confidence** (`refine.py`): only detections draining into
    a river reach downstream of confident change are kept. Confidence is high
    where radar and optical agree, medium for optical only, low for radar only.
@@ -147,6 +187,7 @@ Studied for method only; no code was copied.
 ## AI assistance disclosure
 
 AI coding assistants were used, as the hackathon rules allow. Claude Code
-(Anthropic) wrote the first version of the code in `backend/` and this
-README under the team's direction. The team reviewed the code, chose the
+(Anthropic) wrote the first version of the code in `backend/` and
+`frontend/`, this README and the notes in FINDINGS.md under the team's
+direction. The team reviewed the code, chose the
 method and parameters, and ran the tests on real data.
