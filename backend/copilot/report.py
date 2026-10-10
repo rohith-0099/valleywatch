@@ -23,6 +23,9 @@ TEXT = {
         "bridges_hit": "Bridges hit", "of": "of", "mapped": "mapped",
         "cutoff": "Who is cut off", "no_vehicle": "Settlements with no vehicle road",
         "no_route": "Settlements with no route at all", "buildings": "buildings",
+        "what_if": "What-if (assumption, not observed): if the {n} bridges with flood change at "
+                   "the deck are also down, {veh} settlements have no vehicle road and {any} "
+                   "have no route at all.",
         "priority": "Largest cut-off settlements", "settlement": "Settlement",
         "status": "Status", "town_before": "Town was (km)", "broken": "Broken road (OSM id)",
         "status_any": "no route at all", "status_vehicle": "no vehicle road", "none": "None found.",
@@ -49,6 +52,8 @@ TEXT = {
         "bridges_hit": "क्षतिग्रस्त पुल", "of": "मध्ये", "mapped": "नक्सामा",
         "cutoff": "को-को सम्पर्कविहीन छन्", "no_vehicle": "सवारी सडक नभएका बस्ती",
         "no_route": "कुनै पनि बाटो नभएका बस्ती", "buildings": "भवन",
+        "what_if": "यदि-भने (अनुमान, अवलोकन होइन): बाढीले छोएका {n} पुल पनि भत्किएका भए {veh} बस्तीमा "
+                   "सवारी सडक हुँदैन र {any} बस्तीमा कुनै पनि बाटो हुँदैन।",
         "priority": "सबैभन्दा ठूला सम्पर्कविहीन बस्ती", "settlement": "बस्ती",
         "status": "अवस्था", "town_before": "पहिले बजारसम्म (कि.मि.)", "broken": "टुटेको सडक (OSM id)",
         "status_any": "कुनै बाटो छैन", "status_vehicle": "सवारी सडक छैन", "none": "कुनै भेटिएन।",
@@ -128,6 +133,13 @@ def build_report(facts, language="en", refresh=False):
     table = (f"<table><tr><th>{t['settlement']}</th><th>{t['buildings']}</th><th>{t['status']}</th>"
              f"<th>{t['town_before']}</th><th>{t['broken']}</th></tr>{rows}</table>"
              if worst else f"<p>{t['none']}</p>")
+    w = facts.summary["cutoff"].get("what_if_exposed_bridges_down") or {}
+    what_if = ""
+    if w.get("exposed_bridges"):
+        what_if = '<p class="note">' + t["what_if"].format(
+            n=n(w["exposed_bridges"], "cutoff.what_if.exposed_bridges"),
+            veh=n(w["no_vehicle_road_settlements"], "cutoff.what_if.no_vehicle_road_settlements"),
+            any=n(w["no_route_at_all_settlements"], "cutoff.what_if.no_route_at_all_settlements")) + "</p>"
     box = ", ".join(str(v) for v in o["area_box_west_south_east_north"])
     false_alarm = reliability["false_alarm_percent_of_mapped_area"]
     other = "ne" if language == "en" else "en"
@@ -181,6 +193,7 @@ def build_report(facts, language="en", refresh=False):
 <div class="fig"><span>… {t['buildings']}</span><span>{n(o['buildings_in_settlements_with_no_route_at_all'], 'cutoff.no_route_at_all.buildings')}</span></div></div>
 </div>
 
+{what_if}
 <h2>{t['priority']}</h2>
 {table}
 

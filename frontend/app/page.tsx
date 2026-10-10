@@ -301,6 +301,8 @@ export default function Dashboard() {
 
   const ready = bbox.every((v) => v !== "" && Number.isFinite(Number(v))) && floodDate !== "";
   const cutOff = settlements.filter((f) => f.properties.cut_off_any || f.properties.cut_off_vehicle);
+  // Cut off only under the what-if assumption (exposed bridges down).
+  const cutOffWhatIf = settlements.filter((f) => !f.properties.cut_off_any && !f.properties.cut_off_vehicle && (f.properties.what_if_cut_off_any || f.properties.what_if_cut_off_vehicle));
   const s1 = summary?.sentinel1, damage = summary?.damage, cut = summary?.cutoff, test = summary?.acceptance_test;
 
   return (
@@ -378,6 +380,12 @@ export default function Dashboard() {
 
           {!cut && <p className="hint">Flood map ready. Checking roads, buildings and settlements…</p>}
           {cut && (<>
+          {cut.what_if_exposed_bridges_down?.exposed_bridges > 0 && (
+            <div className="whatif">
+              <b>What-if · assumption, not observed</b>
+              If the {cut.what_if_exposed_bridges_down.exposed_bridges} bridges with flood change at the deck (but none on the banks) are also down: {cut.what_if_exposed_bridges_down.no_vehicle_road_settlements} settlements without a vehicle road ({cut.what_if_exposed_bridges_down.no_vehicle_road_buildings.toLocaleString()} buildings), {cut.what_if_exposed_bridges_down.no_route_at_all_settlements} with no route at all.
+            </div>
+          )}
           <h2>Situation report</h2>
           <div className="grid2">
             <button onClick={() => window.open(`${API}/api/runs/${runId}/report?lang=en`, "_blank")}>English</button>
@@ -400,6 +408,15 @@ export default function Dashboard() {
               </button>
             );
           })}
+          {cutOffWhatIf.length > 0 && (<>
+            <p className="hint" style={{ marginTop: 10 }}>Only if exposed bridges are also down (assumption):</p>
+            {cutOffWhatIf.map((f) => (
+              <button key={f.properties.osm_id} className="settle whatif-row" onClick={() => pickSettlement(f)}>
+                <div className="name">{f.properties.name ?? (f.properties.derived ? "Building cluster (no name mapped)" : "Unnamed settlement")}{f.properties.name_en ? ` · ${f.properties.name_en}` : ""}</div>
+                <div className="meta"><span className="tag whatif-tag">what-if</span>{f.properties.buildings} buildings</div>
+              </button>
+            ))}
+          </>)}
           {cut && <p className="hint">Settlements: {cut.settlement_source}. Destination: {cut.town_destination}. Roads outside the box: {cut.roads_outside_box}. {cut.no_vehicle_road.had_no_vehicle_road_before} settlements had no mapped vehicle road even before the flood.</p>}
 
           {cut && (<>

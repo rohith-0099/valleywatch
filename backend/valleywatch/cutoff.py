@@ -213,75 +213,97 @@ def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settin
         counts = nearest.groupby("index_right").size()
         settlements["buildings"] = counts.reindex(settlements.index).fillna(0).astype(int)
 
-    # One search per level, destination and state of the network.
-    searches, snapped, town_target = {}, {}, "nearest town"
-    for level, graph in graphs.items():
-        damaged = graph.copy()
-        damaged.remove_edges_from(broken.keys())
-        town_nodes = list(_snap(towns, graph, settings.max_snap_distance_m).dropna())
-        if not town_nodes:
-            # No town even in the wider area: aim for a main road leaving it.
-            town_nodes = _area_exits(graph, edges, fetched_polygon)
-            town_target = "main road leaving the mapped area (no town found)"
-        hospital_nodes = list(_snap(health, graph, settings.max_snap_distance_m).dropna())
-        for name, nodes in (("town", town_nodes), ("hospital", hospital_nodes)):
-            searches[level, name] = (_routes_to_nearest(graph, nodes),
-                                     _routes_to_nearest(damaged, nodes))
-        snapped[level] = _snap(settlements, graph, settings.max_snap_distance_m)
+    def assess(broken):
+        """Judge every settlement for one set of broken edges."""
+        town_target = "nearest town"
+        # One search per level, destination and state of the network.
+        searches, snapped = {}, {}
+        for level, graph in graphs.items():
+            damaged = graph.copy()
+            damaged.remove_edges_from(broken.keys())
+            town_nodes = list(_snap(towns, graph, settings.max_snap_distance_m).dropna())
+            if not town_nodes:
+                # No town even in the wider area: aim for a main road leaving it.
+                town_nodes = _area_exits(graph, edges, fetched_polygon)
+                town_target = "main road leaving the mapped area (no town found)"
+            hospital_nodes = list(_snap(health, graph, settings.max_snap_distance_m).dropna())
+            for name, nodes in (("town", town_nodes), ("hospital", hospital_nodes)):
+                searches[level, name] = (_routes_to_nearest(graph, nodes),
+                                         _routes_to_nearest(damaged, nodes))
+            snapped[level] = _snap(settlements, graph, settings.max_snap_distance_m)
 
-    rows, link_rows, route_rows = [], [], []
-    for index, place in settlements.iterrows():
-        row = {"osm_id": place.get("osm_id"), "name": place.get("name"),
-               "name_en": place.get("name:en"), "place": place.get("place"),
-               "derived": bool(place.get("derived", False)),
-               "buildings": int(place["buildings"]), "geometry": place.geometry}
+        rows, link_rows, route_rows = [], [], []
+        for index, place in settlements.iterrows():
+            row = {"osm_id": place.get("osm_id"), "name": place.get("name"),
+                   "name_en": place.get("name:en"), "place": place.get("place"),
+                   "derived": bool(place.get("derived", False)),
+                   "buildings": int(place["buildings"]), "geometry": place.geometry}
+            for level in LEVELS:
+                node = snapped[level].get(index)
+                for name in DESTINATIONS:
+                    (pred_before, dist_before), (_, dist_after) = searches[level, name]
+                    key = f"{level}_{name}"
+                    before = None if _is_missing(node) else dist_before.get(node)
+                    after = dist_after.get(node) if before is not None else None
+                    if not dist_before:
+                        status = "no destination mapped"
+                    elif _is_missing(node):
+                        status = "not on this network"
+                    elif before is None:
+                        status = "no route before the flood"
+                    elif after is None:
+                        status = "cut off"
+                    elif (after >= settings.detour_factor * before and
+                          after - before >= settings.detour_min_extra_km * 1000):
+                        status = "connected, long detour"
+                    else:
+                        status = "connected"
+                    row[f"{key}_status"] = status
+                    row[f"{key}_km_before"] = round(before / 1000, 2) if before is not None else None
+                    row[f"{key}_km_after"] = round(after / 1000, 2) if after is not None else None
+
+                    if status == "cut off":
+                        # Walk the old route outward from the settlement. The first
+                        # broken edge on it is the link whose loss isolates the place.
+                        path = _path_from(node, pred_before)
+                        if len(path) > 1:
+                            route_rows.append({"settlement": row["osm_id"], "level": level,
+                                               "to": name, "geometry": LineString(path)})
+                        for a, b in zip(path[:-1], path[1:]):
+                            reason = broken.get((a, b)) or broken.get((b, a))
+                            if reason:
+                                data = graph_any.edges[a, b]
+                                row[f"{key}_broken_link"] = data["osm_id"]
+                                link_rows.append({"settlement": row["osm_id"], "level": level,
+                                                  "to": name, "osm_id": data["osm_id"],
+                                                  "highway": data["highway"], "reason": reason,
+                                                  "geometry": LineString([a, b])})
+                                break
+                row[f"cut_off_{level}"] = "cut off" in (row[f"{level}_town_status"],
+                                                        row[f"{level}_hospital_status"])
+            rows.append(row)
+
+        return rows, link_rows, route_rows, town_target
+
+    rows, link_rows, route_rows, town_target = assess(broken)
+
+    # What-if: bridges with flood change right at the deck but no change on
+    # the banks are "exposed", not hit. A flood that stays in its channel can
+    # still sweep such a bridge away, and we cannot see that. So the analysis
+    # is repeated ASSUMING every exposed bridge is down too. This is an
+    # assumption, shown next to the main result, never mixed into it.
+    exposed_ids = (set(bridges.loc[bridges["status"] == "exposed", "osm_id"])
+                   if len(bridges) and "status" in bridges.columns else set())
+    what_if_broken = dict(broken)
+    for _, edge in edges[edges["osm_id"].isin(exposed_ids)].iterrows():
+        what_if_broken.setdefault((edge["a"], edge["b"]), "exposed bridge assumed down")
+    what_if_rows = assess(what_if_broken)[0] if exposed_ids else rows
+    for row, other in zip(rows, what_if_rows):
         for level in LEVELS:
-            node = snapped[level].get(index)
-            for name in DESTINATIONS:
-                (pred_before, dist_before), (_, dist_after) = searches[level, name]
-                key = f"{level}_{name}"
-                before = None if _is_missing(node) else dist_before.get(node)
-                after = dist_after.get(node) if before is not None else None
-                if not dist_before:
-                    status = "no destination mapped"
-                elif _is_missing(node):
-                    status = "not on this network"
-                elif before is None:
-                    status = "no route before the flood"
-                elif after is None:
-                    status = "cut off"
-                elif (after >= settings.detour_factor * before and
-                      after - before >= settings.detour_min_extra_km * 1000):
-                    status = "connected, long detour"
-                else:
-                    status = "connected"
-                row[f"{key}_status"] = status
-                row[f"{key}_km_before"] = round(before / 1000, 2) if before is not None else None
-                row[f"{key}_km_after"] = round(after / 1000, 2) if after is not None else None
-
-                if status == "cut off":
-                    # Walk the old route outward from the settlement. The first
-                    # broken edge on it is the link whose loss isolates the place.
-                    path = _path_from(node, pred_before)
-                    if len(path) > 1:
-                        route_rows.append({"settlement": row["osm_id"], "level": level,
-                                           "to": name, "geometry": LineString(path)})
-                    for a, b in zip(path[:-1], path[1:]):
-                        reason = broken.get((a, b)) or broken.get((b, a))
-                        if reason:
-                            data = graph_any.edges[a, b]
-                            row[f"{key}_broken_link"] = data["osm_id"]
-                            link_rows.append({"settlement": row["osm_id"], "level": level,
-                                              "to": name, "osm_id": data["osm_id"],
-                                              "highway": data["highway"], "reason": reason,
-                                              "geometry": LineString([a, b])})
-                            break
-            row[f"cut_off_{level}"] = "cut off" in (row[f"{level}_town_status"],
-                                                    row[f"{level}_hospital_status"])
-        rows.append(row)
+            row[f"what_if_cut_off_{level}"] = other[f"cut_off_{level}"]
 
     columns = ["osm_id", "name", "name_en", "place", "derived", "buildings", "cut_off_any",
-               "cut_off_vehicle"]
+               "cut_off_vehicle", "what_if_cut_off_any", "what_if_cut_off_vehicle"]
     for level in LEVELS:
         for name in DESTINATIONS:
             columns += [f"{level}_{name}_{suffix}"
@@ -323,6 +345,15 @@ def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settin
             "long_detour_to_hospital": count("any_hospital_status", "connected, long detour"),
             "had_no_route_before": count("any_town_status", "no route before the flood")
                                    + count("any_town_status", "not on this network"),
+        },
+        "what_if_exposed_bridges_down": {
+            "assumption": "Every bridge with flood change at its deck but none on its banks "
+                          "is also impassable. Not observed; shown as a what-if.",
+            "exposed_bridges": len(exposed_ids),
+            "no_vehicle_road_settlements": int(len(flagged("what_if_cut_off_vehicle"))),
+            "no_vehicle_road_buildings": int(flagged("what_if_cut_off_vehicle")["buildings"].sum()),
+            "no_route_at_all_settlements": int(len(flagged("what_if_cut_off_any"))),
+            "no_route_at_all_buildings": int(flagged("what_if_cut_off_any")["buildings"].sum()),
         },
         "town_destination": town_target,
         "towns_in_routing_area": int(len(towns)),

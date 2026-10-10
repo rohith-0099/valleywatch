@@ -63,6 +63,20 @@ class RunFacts:
             "note": "Buildings are a rough guide to population; no population figure exists.",
         }
 
+    def get_bridge_what_if(self):
+        """What-if result: cut-off figures IF exposed bridges are also down."""
+        w = self.summary["cutoff"].get("what_if_exposed_bridges_down")
+        if not w:
+            return {"error": "This run has no what-if result."}
+        return {
+            "this_is_an_assumption_not_an_observation": w["assumption"],
+            "exposed_bridges_assumed_down": w["exposed_bridges"],
+            "what_if_settlements_without_vehicle_road": w["no_vehicle_road_settlements"],
+            "what_if_buildings_in_settlements_without_vehicle_road": w["no_vehicle_road_buildings"],
+            "what_if_settlements_with_no_route_at_all": w["no_route_at_all_settlements"],
+            "what_if_buildings_in_settlements_with_no_route_at_all": w["no_route_at_all_buildings"],
+        }
+
     def get_satellite_scenes(self):
         """Which satellite images and map data the analysis used."""
         s = self.summary
@@ -212,6 +226,9 @@ TOOLS = [
      "parameters": {"name": {"type": "string"}}, "required": ["name"]},
     {"name": "list_hit_bridges", "description": "Bridges judged hit, with confidence and reason.",
      "parameters": {"limit": {"type": "integer"}}},
+    {"name": "get_bridge_what_if", "description": "A what-if scenario, NOT an observation: "
+     "cut-off figures if bridges with flood change at the deck (but none on the banks) are "
+     "also down. Always say it is an assumption.", "parameters": {}},
     {"name": "get_reliability", "description": "False-alarm level, radar blind share and the "
      "list of things the system cannot do.", "parameters": {}},
 ]
