@@ -5,12 +5,16 @@ handle the raw 1 GB radar products ourselves. The service orthorectifies each
 image with the Copernicus 30 m DEM, which puts every pixel at its true map
 position even on steep slopes.
 """
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
 import openeo
+from dotenv import load_dotenv
 
 from .config import OPENEO_URL
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Above this many pixels a request is too large for a direct download and is
 # sent as a batch job instead (slower to start, but no timeout).
@@ -20,10 +24,18 @@ SYNC_PIXEL_LIMIT = 4_000_000
 def connect():
     """Open an authenticated openEO session.
 
-    The first run prints a link for a browser login. openEO then stores a
-    refresh token on disk, so later runs need no interaction.
+    If CDSE_CLIENT_ID and CDSE_CLIENT_SECRET are set (in .env), log in with
+    them: no browser is needed, which suits a live demo. Otherwise fall back
+    to a browser login; openEO then stores a refresh token for later runs.
     """
-    return openeo.connect(OPENEO_URL).authenticate_oidc()
+    load_dotenv(REPO_ROOT / ".env")
+    conn = openeo.connect(OPENEO_URL)
+    client_id = os.environ.get("CDSE_CLIENT_ID")
+    client_secret = os.environ.get("CDSE_CLIENT_SECRET")
+    if client_id and client_secret:
+        return conn.authenticate_oidc_client_credentials(
+            client_id=client_id, client_secret=client_secret)
+    return conn.authenticate_oidc()
 
 
 def utm_epsg_for(bbox):
