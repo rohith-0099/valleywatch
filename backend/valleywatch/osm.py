@@ -6,6 +6,7 @@ ohsome serves the map as it stood at any past moment, so we ask for a
 snapshot dated before the flood and never touch the live map.
 """
 import json
+import math
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -22,6 +23,18 @@ LAYER_FILTERS = {
     "places": "place in (city, town, village, hamlet, isolated_dwelling) and type:node",
     "health": "amenity in (hospital, clinic, doctors) or healthcare=*",
 }
+
+
+# Layers needed for routing, fetched for a wider area than the box.
+ROUTING_LAYERS = ("roads", "places", "health")
+
+
+def buffered_bbox(bbox, buffer_km):
+    """Grow a (W, S, E, N) box by `buffer_km` on every side."""
+    west, south, east, north = bbox
+    d_lat = buffer_km / 111.0
+    d_lon = buffer_km / (111.0 * math.cos(math.radians((south + north) / 2)))
+    return (west - d_lon, south - d_lat, east + d_lon, north + d_lat)
 
 
 def snapshot_date(flood_date):
@@ -58,9 +71,11 @@ def _request_features(bbox, snapshot, filter_text):
     return response.json()["features"]
 
 
-def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print):
-    """Download (or load from cache) all pre-event layers for the box.
+def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print, names=None, prefix="osm"):
+    """Download (or load from cache) pre-event layers for a box.
 
+    names: which layers to fetch (default: all). prefix: start of the cache
+    file names, so layers for different boxes do not overwrite each other.
     Returns (layers, snapshot) where layers maps a layer name to a
     GeoDataFrame in WGS84.
     """
@@ -70,11 +85,11 @@ def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print):
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     layers = {}
-    for name, filter_text in LAYER_FILTERS.items():
-        path = cache_dir / f"osm_{name}_{snapshot.isoformat()}.geojson"
+    for name in names or LAYER_FILTERS:
+        path = cache_dir / f"{prefix}_{name}_{snapshot.isoformat()}.geojson"
         if not path.exists():
             progress(f"OpenStreetMap {name}: requesting snapshot of {snapshot}")
-            features = _request_features(bbox, snapshot, filter_text)
+            features = _request_features(bbox, snapshot, LAYER_FILTERS[name])
             for feature in features:
                 # Keep the OSM id under a plain name; drop ohsome bookkeeping.
                 props = feature["properties"]
@@ -86,5 +101,13 @@ def fetch_osm_layers(bbox, flood_date, cache_dir, progress=print):
             layers[name] = gpd.read_file(path)
         else:
             layers[name] = gpd.GeoDataFrame({"osm_id": []}, geometry=[], crs=4326)
-        progress(f"OpenStreetMap {name}: {len(layers[name])} features")
+        progress(f"OpenStreetMap {name} ({prefix}): {len(layers[name])} features")
     return layers, snapshot
+
+
+def fetch_routing_layers(bbox, flood_date, cache_dir, buffer_km, progress=print):
+    """Roads, places and health facilities for the box plus a buffer around it."""
+    wide = buffered_bbox(bbox, buffer_km)
+    layers, _ = fetch_osm_layers(wide, flood_date, cache_dir, progress,
+                                 names=ROUTING_LAYERS, prefix=f"osm_routing{int(buffer_km)}km")
+    return layers

@@ -15,7 +15,7 @@ optical imagery supports it.
 """
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point
+from shapely.geometry import LineString
 
 LEVELS = ["low", "medium", "high"]
 STRONG_SOURCES = ("radar+optical", "optical")
@@ -75,34 +75,36 @@ def assess_roads(roads, hazards, settings):
     return pieces[columns].reset_index(drop=True)
 
 
-def _approach_points(line, distance_m):
-    """Points on the bank just beyond each end of a bridge.
+def _approach_segments(line, length_m):
+    """The bank beyond each end of a bridge, as two short lines.
 
-    The deck is extended in a straight line past each end by `distance_m`.
-    These points are on land, off the river, where the road meets the bridge.
+    The deck is continued in a straight line past each end for `length_m`.
+    These segments lie on land, off the river, where the road meets the bridge.
     """
     coords = list(line.coords)
-    points = []
+    segments = []
     for end, inner in ((coords[0], coords[1]), (coords[-1], coords[-2])):
         dx, dy = end[0] - inner[0], end[1] - inner[1]
-        length = (dx ** 2 + dy ** 2) ** 0.5 or 1.0
-        points.append(Point(end[0] + dx / length * distance_m,
-                            end[1] + dy / length * distance_m))
-    return points
+        norm = (dx ** 2 + dy ** 2) ** 0.5 or 1.0
+        far = (end[0] + dx / norm * length_m, end[1] + dy / norm * length_m)
+        segments.append(LineString([end[:2], far]))
+    return segments
 
 
 def assess_bridges(bridges, hazards, settings):
     """Decide which bridges were hit.
 
     A bridge crosses the river by design, so change in the river under the
-    span proves nothing and is never used. We look only at the bank: the
-    ground just beyond each end of the deck. If water or debris covers that
-    ground, the flood rose above the bank at the bridgehead.
+    span proves nothing and is never used. We look only at the banks: a 25 m
+    stretch beyond each end of the deck. A bank is "covered" when water or
+    debris covers most of that stretch, meaning the flood rose above the bank
+    at the bridgehead. A stretch rather than a single point is used so that
+    a one-pixel error cannot decide the result.
 
-        both bridgeheads covered    hit, high confidence
-        one bridgehead covered      hit, medium confidence
-        neither                     not hit ("exposed" if the river below
-                                    changed, "clear" otherwise)
+        both banks covered    hit, high confidence
+        one bank covered      hit, medium confidence
+        neither               not hit ("exposed" if the river below
+                              changed, "clear" otherwise)
     """
     out = bridges.copy()
     if bridges.empty:
@@ -111,17 +113,19 @@ def assess_bridges(bridges, hazards, settings):
     rows = []
     for geometry in out.geometry:
         line = geometry if geometry.geom_type == "LineString" else max(geometry.geoms, key=lambda g: g.length)
-        heads = _approach_points(line, settings.bridge_approach_m)
-        heads_covered = sum(everything is not None and everything.contains(head)
-                            for head in heads)
+        banks_covered = 0
+        if everything is not None:
+            for bank in _approach_segments(line, settings.bridge_approach_m):
+                share = bank.intersection(everything).length / bank.length
+                banks_covered += share >= settings.bridge_bank_cover
         river_changed = everything is not None and line.intersects(everything)
-        if heads_covered == 2:
+        if banks_covered == 2:
             rows.append((True, "hit", "high", "hazard covers the bank at both ends"))
-        elif heads_covered == 1:
+        elif banks_covered == 1:
             rows.append((True, "hit", "medium", "hazard covers the bank at one end"))
         elif river_changed:
             rows.append((False, "exposed", None,
-                         "river changed under the span, both banks unaffected"))
+                         "river changed under the span, banks not covered"))
         else:
             rows.append((False, "clear", None, "no change at the bridge"))
     out["hit"] = [r[0] for r in rows]

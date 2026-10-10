@@ -18,9 +18,10 @@ from .cutoff import analyse_cutoff
 from .damage import assess_damage
 from .flood_mask import CLASS_DEBRIS, CLASS_WATER, detect_flood_and_debris
 from .optical import combine_radar_and_optical, optical_evidence
-from .osm import fetch_osm_layers
+from .osm import fetch_osm_layers, fetch_routing_layers
 from .quicklook import save_quicklook
-from .refine import keep_flood_path, radar_only_areas, score_confidence
+from .refine import (keep_flood_path, optical_only_areas, radar_only_areas,
+                     score_confidence)
 from .scene_picker import list_sentinel2_scenes, pick_sentinel1_pair
 from .terrain import terrain_mask
 from .vectorize import masks_to_polygons
@@ -96,8 +97,11 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
             "optional": side == "baseline", "key": side})
     requests.append({"label": "elevation", "cube": fetch.dem_cube(conn, bbox, resolution),
                      "path": data_dir / "dem.tif", "optional": False, "key": "dem"})
+    window = timedelta(days=settings.search_days_before)
     optical_windows = {
-        "before": (flood_date - timedelta(days=settings.search_days_before), flood_date),
+        # An earlier window, compared with "before", is the optical no-flood test.
+        "earlier": (flood_date - 2 * window, flood_date - window),
+        "before": (flood_date - window, flood_date),
         "after": (flood_date + timedelta(days=1),
                   flood_date + timedelta(days=settings.search_days_after + 1))}
     for side, (start, end) in optical_windows.items():
@@ -144,13 +148,13 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     acceptance = None
     if result["no_flood"] is not None:
         quiet = result["no_flood"]
-        acceptance = {
+        acceptance = {"radar": {
             "flood_pair": radar_only_areas(result["water"], result["debris_before_pruning"],
                                            result["water_core"], corridor_info, pixel_m, settings),
             "no_flood_pair": radar_only_areas(quiet["water"], quiet["debris"],
                                               quiet["water_core"], corridor_info, pixel_m, settings),
             "no_flood_pair_dates": [pair["baseline"]["date"], pair["before"]["date"]],
-        }
+        }}
 
     # ---- Step 3: optical check where the sky was clear ---------------------
     if available("s2_before") and available("s2_after"):
@@ -158,8 +162,30 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
         bands = fetch.S2_BANDS
         s2_before = dict(zip(bands, _read_onto_grid(paths["s2_before"], grid)))
         s2_after = dict(zip(bands, _read_onto_grid(paths["s2_after"], grid)))
-        combine_radar_and_optical(result, optical_evidence(s2_before, s2_after, settings),
-                                  pixel_m, settings)
+        evidence = optical_evidence(s2_before, s2_after, settings)
+        combine_radar_and_optical(result, evidence, pixel_m, settings)
+
+        # Optical acceptance test: the optical rules on two composites from
+        # before the flood, counted on ground that is clear in all three.
+        if available("s2_earlier"):
+            s2_earlier = dict(zip(bands, _read_onto_grid(paths["s2_earlier"], grid)))
+            quiet_evidence = optical_evidence(s2_earlier, s2_before, settings)
+            common_clear = evidence["clear"] & quiet_evidence["clear"]
+            corridor_pixels = max(int((corridor & result["has_data"]).sum()), 1)
+            acceptance = acceptance or {}
+            acceptance["optical"] = {
+                "flood_pair": optical_only_areas(evidence, common_clear, corridor,
+                                                 corridor_info, pixel_m, settings),
+                "no_flood_pair": optical_only_areas(quiet_evidence, common_clear, corridor,
+                                                    corridor_info, pixel_m, settings),
+                "no_flood_pair_windows": [[d.isoformat() for d in optical_windows["earlier"]],
+                                          [d.isoformat() for d in optical_windows["before"]]],
+                "corridor_clear_in_all_three_percent": round(
+                    100 * float((common_clear & corridor).sum()) / corridor_pixels, 1),
+            }
+        else:
+            acceptance = acceptance or {}
+            acceptance["optical"] = {"not_run": "no earlier Sentinel-2 composite available"}
     else:
         report("No usable optical images; result is from radar only")
         combine_radar_and_optical(result, None, pixel_m, settings)
@@ -273,8 +299,10 @@ def run_damage_and_cutoff(bbox, flood_date, settings=None, data_dir=None, output
 
     # ---- Step 5: cut-off settlements ----------------------------------------
     progress("Finding cut-off settlements")
-    cutoff = analyse_cutoff(layers, damage["road_hits"], damage["bridges"], bbox,
-                            fetch.utm_epsg_for(bbox), settings)
+    routing_layers = fetch_routing_layers(bbox, flood_date, data_dir,
+                                          settings.routing_buffer_km, progress)
+    cutoff = analyse_cutoff(layers, routing_layers, damage["road_hits"], damage["bridges"],
+                            bbox, fetch.utm_epsg_for(bbox), settings)
     for layer in ("settlements", "broken_links", "lost_routes"):
         path = output_dir / f"{layer}.geojson"
         if len(cutoff[layer]):

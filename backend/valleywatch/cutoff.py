@@ -4,13 +4,19 @@
    a node, every piece of road between two vertices is an edge with a length.
 2. Remove the edges the flood hit (road sections inside hazard polygons, and
    bridges judged hit).
-3. For every settlement, look for a route to the nearest town and to the
-   nearest hospital, before and after. A settlement that had a route and has
-   none now is cut off.
+3. For every settlement inside the box, look for a route to the nearest town
+   and to the nearest hospital, before and after.
 
-"Town" needs care on a small map: the nearest town is often outside the
-chosen box. In that case we test for a route to a main road that leaves the
-box instead, and say so in the output.
+Two levels are reported, because they mean different things to a rescuer:
+
+* "vehicle": only roads a vehicle can use. Losing this means no ambulance
+  or truck can drive in.
+* "any": footpaths and trails count too. Losing this means there is no
+  mapped way in or out at all.
+
+The road network is taken from a wider area than the box, since the nearest
+town or hospital is often outside it. The flood is only mapped inside the
+box, so roads in the surrounding buffer are ASSUMED INTACT.
 """
 import geopandas as gpd
 import networkx as nx
@@ -22,6 +28,10 @@ SETTLEMENT_PLACES = ("village", "hamlet", "isolated_dwelling")
 TOWN_PLACES = ("town", "city")
 MAIN_ROADS = ("motorway", "trunk", "primary", "secondary", "tertiary")
 NOT_ROADS = ("proposed", "construction", "abandoned", "razed")
+# Ways a vehicle cannot use. Tracks stay in: jeeps and tractors drive them.
+FOOT_ONLY = ("path", "footway", "steps", "bridleway", "pedestrian", "cycleway", "corridor")
+LEVELS = ("vehicle", "any")
+DESTINATIONS = ("town", "hospital")
 HUB = "all destinations"  # helper node linked to every destination
 
 
@@ -47,39 +57,47 @@ def build_road_graph(roads):
                 graph.add_edge(a, b, length=length, osm_id=osm_id, highway=highway)
                 records.append({"a": a, "b": b, "osm_id": osm_id, "highway": highway,
                                 "geometry": LineString([a, b])})
-    edges = gpd.GeoDataFrame(records, geometry="geometry", crs=roads.crs)
+    edges = gpd.GeoDataFrame(records, columns=["a", "b", "osm_id", "highway", "geometry"],
+                             geometry="geometry", crs=roads.crs)
     return graph, edges
 
 
+def vehicle_only(graph):
+    """The same network without footpaths and trails."""
+    keep = [(a, b) for a, b, highway in graph.edges(data="highway") if highway not in FOOT_ONLY]
+    return graph.edge_subgraph(keep).copy()
+
+
 def find_broken_edges(edges, road_hits, bridges):
-    """Edges the flood made impassable, as a set of (a, b) node pairs."""
+    """Edges the flood made impassable: {(a, b): reason}."""
     broken = {}
-    if len(road_hits):
+    if len(road_hits) and len(edges):
         # A 2 m margin absorbs rounding when the hit sections were cut out.
         zones = gpd.GeoDataFrame(geometry=road_hits.buffer(2.0), crs=road_hits.crs)
         for _, edge in gpd.sjoin(edges, zones, predicate="intersects").iterrows():
             broken[(edge["a"], edge["b"])] = "road section inside hazard"
-    hit_bridge_ids = set(bridges.loc[bridges["hit"], "osm_id"])
+    hit_bridge_ids = set(bridges.loc[bridges["hit"].astype(bool), "osm_id"]) if len(bridges) else set()
     for _, edge in edges[edges["osm_id"].isin(hit_bridge_ids)].iterrows():
         broken[(edge["a"], edge["b"])] = "bridge hit"
     return broken
 
 
 def _snap(points, graph, max_distance):
-    """Nearest graph node for each point (None when no road is close)."""
+    """Nearest graph node for each point (missing when no road is close)."""
+    if not len(points) or graph.number_of_nodes() == 0:
+        return pd.Series([None] * len(points), index=points.index, dtype=object)
     nodes = list(graph.nodes)
     node_points = gpd.GeoDataFrame({"node": nodes},
                                    geometry=[Point(n) for n in nodes], crs=points.crs)
-    joined = gpd.sjoin_nearest(points[["geometry"]], node_points, max_distance=max_distance,
-                               distance_col="snap_m")
+    joined = gpd.sjoin_nearest(points[["geometry"]], node_points, max_distance=max_distance)
     joined = joined[~joined.index.duplicated()]
     return joined["node"].reindex(points.index)
 
 
-def _box_exits(graph, edges, bbox_polygon, margin_m=150.0):
-    """Nodes where a main road leaves the box (within `margin_m` of its edge)."""
+def _area_exits(graph, edges, area_polygon, margin_m=150.0):
+    """Nodes where a main road leaves the fetched area."""
     main = edges[edges["highway"].isin(MAIN_ROADS)]
-    near_edge = main[main.distance(bbox_polygon.exterior) <= margin_m]
+    near_edge = main[main.distance(area_polygon.exterior) <= margin_m]
     return list({node for node in pd.concat([near_edge["a"], near_edge["b"]]) if node in graph})
 
 
@@ -88,15 +106,15 @@ def _routes_to_nearest(graph, destinations):
 
     One search from a helper node joined to all destinations at zero cost
     gives the nearest destination of every node at once.
+    Returns (predecessors, distance); both empty without destinations.
     """
+    destinations = [n for n in destinations if n in graph]
     if not destinations:
         return {}, {}
     work = graph.copy()
-    work.add_node(HUB)
     for node in destinations:
         work.add_edge(HUB, node, length=0.0)
-    predecessors, distance = nx.dijkstra_predecessor_and_distance(work, HUB, weight="length")
-    return predecessors, distance
+    return nx.dijkstra_predecessor_and_distance(work, HUB, weight="length")
 
 
 def _path_from(node, predecessors):
@@ -110,45 +128,38 @@ def _path_from(node, predecessors):
     return path
 
 
-def analyse_cutoff(layers, road_hits, bridges, bbox, crs, settings):
+def _is_missing(node):
+    return node is None or (isinstance(node, float) and pd.isna(node))
+
+
+def analyse_cutoff(layers, routing_layers, road_hits, bridges, bbox, crs, settings):
     """Run the cut-off analysis.
 
-    layers: pre-event OSM layers. road_hits / bridges: output of Step 4.
-    bbox: (W, S, E, N) in degrees. crs: metric CRS of the area.
+    layers: pre-event OSM layers of the box (used for buildings).
+    routing_layers: roads, places and health for the box plus its buffer.
+    road_hits / bridges: output of Step 4 (inside the box only).
     Returns GeoDataFrames in WGS84 ('settlements', 'broken_links',
     'lost_routes') and a totals dict.
     """
-    roads = layers["roads"].to_crs(crs)
-    places = layers["places"].to_crs(crs)
-    buildings = layers["buildings"].to_crs(crs)
-    health = layers["health"].to_crs(crs).copy()
+    roads = routing_layers["roads"].to_crs(crs)
+    places = routing_layers["places"].to_crs(crs)
+    health = routing_layers["health"].to_crs(crs).copy()
     health["geometry"] = health.geometry.centroid  # hospitals mapped as outlines
+    buildings = layers["buildings"].to_crs(crs)
     road_hits, bridges = road_hits.to_crs(crs), bridges.to_crs(crs)
-    bbox_polygon = gpd.GeoSeries([box(*bbox)], crs=4326).to_crs(crs).iloc[0]
+    box_polygon = gpd.GeoSeries([box(*bbox)], crs=4326).to_crs(crs).iloc[0]
+    fetched_area = roads.total_bounds if len(roads) else box_polygon.bounds
+    fetched_polygon = box(*fetched_area)
 
-    graph, edges = build_road_graph(roads)
+    graph_any, edges = build_road_graph(roads)
     broken = find_broken_edges(edges, road_hits, bridges)
-    damaged = graph.copy()
-    damaged.remove_edges_from(broken.keys())
+    graphs = {"any": graph_any, "vehicle": vehicle_only(graph_any)}
 
     place_kind = places["place"] if "place" in places.columns else pd.Series(dtype=str)
-    settlements = places[place_kind.isin(SETTLEMENT_PLACES)].copy()
+    # Settlements are judged only inside the box, where the flood was mapped.
+    settlements = places[place_kind.isin(SETTLEMENT_PLACES) &
+                         places.within(box_polygon)].copy()
     towns = places[place_kind.isin(TOWN_PLACES)]
-
-    # Destinations. With no town inside the box, use main roads leaving it.
-    town_nodes = [n for n in _snap(towns, graph, settings.max_snap_distance_m).dropna()] \
-        if len(towns) else []
-    town_target = "nearest town"
-    if not town_nodes:
-        town_nodes = _box_exits(graph, edges, bbox_polygon)
-        town_target = "main road leaving the area (no town inside the area)"
-    hospital_nodes = [n for n in _snap(health, graph, settings.max_snap_distance_m).dropna()] \
-        if len(health) else []
-
-    searches = {}
-    for name, nodes in (("town", town_nodes), ("hospital", hospital_nodes)):
-        searches[name] = {"before": _routes_to_nearest(graph, nodes),
-                          "after": _routes_to_nearest(damaged, nodes)}
 
     # Size of each settlement: buildings closest to it, within a radius.
     settlements["buildings"] = 0
@@ -157,87 +168,124 @@ def analyse_cutoff(layers, road_hits, bridges, bbox, crs, settings):
         centres["geometry"] = buildings.geometry.centroid
         nearest = gpd.sjoin_nearest(centres[["geometry"]], settlements[["geometry"]],
                                     max_distance=settings.settlement_radius_m)
+        nearest = nearest[~nearest.index.duplicated()]
         counts = nearest.groupby("index_right").size()
         settlements["buildings"] = counts.reindex(settlements.index).fillna(0).astype(int)
 
-    settlements["node"] = _snap(settlements, graph, settings.max_snap_distance_m) \
-        if len(settlements) else None
+    # One search per level, destination and state of the network.
+    searches, snapped, town_target = {}, {}, "nearest town"
+    for level, graph in graphs.items():
+        damaged = graph.copy()
+        damaged.remove_edges_from(broken.keys())
+        town_nodes = list(_snap(towns, graph, settings.max_snap_distance_m).dropna())
+        if not town_nodes:
+            # No town even in the wider area: aim for a main road leaving it.
+            town_nodes = _area_exits(graph, edges, fetched_polygon)
+            town_target = "main road leaving the mapped area (no town found)"
+        hospital_nodes = list(_snap(health, graph, settings.max_snap_distance_m).dropna())
+        for name, nodes in (("town", town_nodes), ("hospital", hospital_nodes)):
+            searches[level, name] = (_routes_to_nearest(graph, nodes),
+                                     _routes_to_nearest(damaged, nodes))
+        snapped[level] = _snap(settlements, graph, settings.max_snap_distance_m)
+
     rows, link_rows, route_rows = [], [], []
     for index, place in settlements.iterrows():
-        node = place["node"]
         row = {"osm_id": place.get("osm_id"), "name": place.get("name"),
                "name_en": place.get("name:en"), "place": place.get("place"),
                "buildings": int(place["buildings"]), "geometry": place.geometry}
-        for name in ("town", "hospital"):
-            (pred_before, dist_before), (_, dist_after) = (
-                searches[name]["before"], searches[name]["after"])
-            has_destination = bool(dist_before)
-            before = dist_before.get(node) if node is not None and not pd.isna(node) else None
-            after = dist_after.get(node) if before is not None else None
-            if not has_destination:
-                status = "no destination mapped in the area"
-            elif node is None or (isinstance(node, float) and pd.isna(node)):
-                status = "not on the mapped road network"
-            elif before is None:
-                status = "no route before the flood"
-            elif after is None:
-                status = "cut off"
-            elif (after >= settings.detour_factor * before and
-                  after - before >= settings.detour_min_extra_km * 1000):
-                status = "connected, long detour"
-            else:
-                status = "connected"
-            row[f"{name}_status"] = status
-            row[f"{name}_km_before"] = round(before / 1000, 2) if before is not None else None
-            row[f"{name}_km_after"] = round(after / 1000, 2) if after is not None else None
+        for level in LEVELS:
+            node = snapped[level].get(index)
+            for name in DESTINATIONS:
+                (pred_before, dist_before), (_, dist_after) = searches[level, name]
+                key = f"{level}_{name}"
+                before = None if _is_missing(node) else dist_before.get(node)
+                after = dist_after.get(node) if before is not None else None
+                if not dist_before:
+                    status = "no destination mapped"
+                elif _is_missing(node):
+                    status = "not on this network"
+                elif before is None:
+                    status = "no route before the flood"
+                elif after is None:
+                    status = "cut off"
+                elif (after >= settings.detour_factor * before and
+                      after - before >= settings.detour_min_extra_km * 1000):
+                    status = "connected, long detour"
+                else:
+                    status = "connected"
+                row[f"{key}_status"] = status
+                row[f"{key}_km_before"] = round(before / 1000, 2) if before is not None else None
+                row[f"{key}_km_after"] = round(after / 1000, 2) if after is not None else None
 
-            if status == "cut off":
-                # Walk the old route outward from the settlement. The first
-                # broken edge on it is the link whose loss isolates the place.
-                path = _path_from(node, pred_before)
-                route_rows.append({"settlement": row["osm_id"], "to": name,
-                                   "geometry": LineString(path) if len(path) > 1 else None})
-                for a, b in zip(path[:-1], path[1:]):
-                    reason = broken.get((a, b)) or broken.get((b, a))
-                    if reason:
-                        data = graph.edges[a, b]
-                        row[f"{name}_broken_link"] = data["osm_id"]
-                        link_rows.append({"settlement": row["osm_id"], "to": name,
-                                          "osm_id": data["osm_id"], "highway": data["highway"],
-                                          "reason": reason, "geometry": LineString([a, b])})
-                        break
-        row["cut_off"] = "cut off" in (row["town_status"], row["hospital_status"])
+                if status == "cut off":
+                    # Walk the old route outward from the settlement. The first
+                    # broken edge on it is the link whose loss isolates the place.
+                    path = _path_from(node, pred_before)
+                    if len(path) > 1:
+                        route_rows.append({"settlement": row["osm_id"], "level": level,
+                                           "to": name, "geometry": LineString(path)})
+                    for a, b in zip(path[:-1], path[1:]):
+                        reason = broken.get((a, b)) or broken.get((b, a))
+                        if reason:
+                            data = graph_any.edges[a, b]
+                            row[f"{key}_broken_link"] = data["osm_id"]
+                            link_rows.append({"settlement": row["osm_id"], "level": level,
+                                              "to": name, "osm_id": data["osm_id"],
+                                              "highway": data["highway"], "reason": reason,
+                                              "geometry": LineString([a, b])})
+                            break
+            row[f"cut_off_{level}"] = "cut off" in (row[f"{level}_town_status"],
+                                                    row[f"{level}_hospital_status"])
         rows.append(row)
 
-    columns = ["osm_id", "name", "name_en", "place", "buildings", "cut_off",
-               "town_status", "town_km_before", "town_km_after", "town_broken_link",
-               "hospital_status", "hospital_km_before", "hospital_km_after",
-               "hospital_broken_link", "geometry"]
-    result = gpd.GeoDataFrame(rows, columns=columns, geometry="geometry", crs=crs)
-    # Largest cut-off settlements first, so rescuers see them at the top.
-    result = result.sort_values(["cut_off", "buildings"], ascending=[False, False]).reset_index(drop=True)
-    links = gpd.GeoDataFrame(link_rows, columns=["settlement", "to", "osm_id", "highway",
+    columns = ["osm_id", "name", "name_en", "place", "buildings", "cut_off_any", "cut_off_vehicle"]
+    for level in LEVELS:
+        for name in DESTINATIONS:
+            columns += [f"{level}_{name}_{suffix}"
+                        for suffix in ("status", "km_before", "km_after", "broken_link")]
+    result = gpd.GeoDataFrame(rows, columns=columns + ["geometry"], geometry="geometry", crs=crs)
+    # Worst first: no route at all, then no vehicle road, then by size.
+    result = result.sort_values(["cut_off_any", "cut_off_vehicle", "buildings"],
+                                ascending=False).reset_index(drop=True)
+    links = gpd.GeoDataFrame(link_rows, columns=["settlement", "level", "to", "osm_id", "highway",
                                                  "reason", "geometry"], geometry="geometry", crs=crs)
-    routes = gpd.GeoDataFrame([r for r in route_rows if r["geometry"] is not None],
-                              columns=["settlement", "to", "geometry"], geometry="geometry", crs=crs)
+    routes = gpd.GeoDataFrame(route_rows, columns=["settlement", "level", "to", "geometry"],
+                              geometry="geometry", crs=crs)
 
     def count(column, status):
-        return int((result[column] == status).sum())
+        return int((result[column] == status).sum()) if len(result) else 0
+
+    def flagged(column):
+        return result[result[column].astype(bool)] if len(result) else result
 
     totals = {
-        "settlements": int(len(result)),
-        "settlements_cut_off": int(result["cut_off"].sum()),
-        "buildings_in_cut_off_settlements": int(result.loc[result["cut_off"], "buildings"].sum()),
+        "settlements_in_box": int(len(result)),
+        "no_vehicle_road": {
+            "settlements": int(len(flagged("cut_off_vehicle"))),
+            "buildings": int(flagged("cut_off_vehicle")["buildings"].sum()),
+            "cut_off_from_town": count("vehicle_town_status", "cut off"),
+            "cut_off_from_hospital": count("vehicle_hospital_status", "cut off"),
+            "long_detour_to_town": count("vehicle_town_status", "connected, long detour"),
+            "long_detour_to_hospital": count("vehicle_hospital_status", "connected, long detour"),
+            "had_no_vehicle_road_before": count("vehicle_town_status", "no route before the flood")
+                                          + count("vehicle_town_status", "not on this network"),
+        },
+        "no_route_at_all": {
+            "settlements": int(len(flagged("cut_off_any"))),
+            "buildings": int(flagged("cut_off_any")["buildings"].sum()),
+            "cut_off_from_town": count("any_town_status", "cut off"),
+            "cut_off_from_hospital": count("any_hospital_status", "cut off"),
+            "long_detour_to_town": count("any_town_status", "connected, long detour"),
+            "long_detour_to_hospital": count("any_hospital_status", "connected, long detour"),
+            "had_no_route_before": count("any_town_status", "no route before the flood")
+                                   + count("any_town_status", "not on this network"),
+        },
         "town_destination": town_target,
-        "town_destinations_found": len(town_nodes),
-        "hospitals_found": len(hospital_nodes),
-        "cut_off_from_town": count("town_status", "cut off"),
-        "cut_off_from_hospital": count("hospital_status", "cut off"),
-        "long_detour_to_town": count("town_status", "connected, long detour"),
-        "long_detour_to_hospital": count("hospital_status", "connected, long detour"),
-        "not_on_road_network": count("town_status", "not on the mapped road network"),
-        "no_route_before_flood_to_town": count("town_status", "no route before the flood"),
-        "road_edges_total": graph.number_of_edges(),
+        "towns_in_routing_area": int(len(towns)),
+        "hospitals_in_routing_area": int(len(health)),
+        "routing_buffer_km": settings.routing_buffer_km,
+        "roads_outside_box": "assumed intact (the flood is only mapped inside the box)",
+        "road_edges_total": graph_any.number_of_edges(),
         "road_edges_broken": len(broken),
     }
     return {"settlements": result.to_crs(4326), "broken_links": links.to_crs(4326),

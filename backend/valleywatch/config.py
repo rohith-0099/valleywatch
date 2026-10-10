@@ -118,11 +118,16 @@ class Settings:
     # close to a hazard polygon is reported as a low-confidence hit.
     feature_tolerance_m: float = 10.0
     min_road_hit_m: float = 10.0      # shorter overlaps are pixel-edge noise
-    # A bridge is judged on the ground just beyond each end of its deck,
-    # this far along the bridge line onto the bank.
-    bridge_approach_m: float = 10.0
+    # A bridge is judged on the bank beyond each end of its deck: a segment
+    # this long, continuing the bridge line onto land. The bank counts as
+    # covered when the hazard covers at least `bridge_bank_cover` of it.
+    bridge_approach_m: float = 25.0
+    bridge_bank_cover: float = 0.5
 
     # --- Cut-off analysis ---
+    # Roads, towns and hospitals are also fetched this far outside the box,
+    # because the nearest town or hospital is often beyond its edge.
+    routing_buffer_km: float = 15.0
     # A place further than this from any mapped road is "not on the network".
     max_snap_distance_m: float = 500.0
     # Buildings within this distance are counted towards a settlement.

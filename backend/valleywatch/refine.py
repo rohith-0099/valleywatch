@@ -70,3 +70,24 @@ def radar_only_areas(water, debris, water_core, corridor_info, pixel_m, settings
             "debris_km2": round(float((debris & ~water & path).sum()) * pixel_km2, 3),
             "water_km2_before_path_filter": round(float(water.sum()) * pixel_km2, 3),
             "debris_km2_before_path_filter": round(float((debris & ~water).sum()) * pixel_km2, 3)}
+
+
+def optical_only_areas(evidence, common_clear, corridor, corridor_info, pixel_m, settings):
+    """Area (km2) the optical rules alone would map, after the flood-path filter.
+
+    Used for the optical acceptance test. `common_clear` limits the count to
+    ground that is clear in every composite compared, so that the flood pair
+    and the no-flood pair are judged on exactly the same pixels.
+    """
+    judged = common_clear & corridor
+    min_pixels = max(int(round(settings.optical_min_patch_m2 / pixel_m ** 2)), 1)
+    water = remove_small_objects(judged & evidence["new_water"], max_size=min_pixels - 1)
+    debris = remove_small_objects(judged & evidence["vegetation_loss"] & ~water,
+                                  max_size=min_pixels - 1)
+    seeds = confident_seeds(water | debris, pixel_m, settings.optical_seed_min_area_m2)
+    path = flood_path(corridor_info, seeds)
+    pixel_km2 = pixel_m ** 2 / 1e6
+    return {"water_km2": round(float((water & path).sum()) * pixel_km2, 3),
+            "debris_km2": round(float((debris & path).sum()) * pixel_km2, 3),
+            "water_km2_before_path_filter": round(float(water.sum()) * pixel_km2, 3),
+            "debris_km2_before_path_filter": round(float(debris.sum()) * pixel_km2, 3)}
