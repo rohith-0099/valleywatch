@@ -293,3 +293,88 @@ be normal change.
   route leaves the box may be wrongly reported.
 - One settlement in the list is across the border in China. The box is the
   only input, so the system does not filter by country.
+
+## Optical no-flood acceptance test
+
+Optical rules applied to two composites from before the flood (15 Jun to 21
+Jul against 21 Jul to 26 Aug), counted on ground clear in all three
+composites (82% of the corridor on the full box, 75% on the small box).
+
+| Full box | Flood pair | No-flood pair | Ratio |
+|---|---|---|---|
+| Optical debris (vegetation loss) | 2.843 km2 | 0.000 km2 | clean |
+| Optical water (new water) | 1.474 km2 | 0.839 km2 | 1.8 to 1 |
+
+- Optical debris passes: the vegetation-loss rule finds nothing when there
+  is no flood.
+- **Optical water fails.** More than half as much "new water" appears with
+  no flood at all. Rivers rise and widen through the monsoon, so "water now,
+  not water a month earlier" is true every year. Optical-only water should
+  be treated as unreliable until this is fixed (ideas: require the water to
+  exceed the no-flood pair locally, as done for radar debris, or demand
+  radar agreement for water).
+- Small box: 0.000 km2 optical debris and 0.000 km2 optical water on the
+  no-flood pair, against 0.208 and 0.020 km2 on the flood pair.
+
+## Validation against EMSR927 (measured once, nothing tuned)
+
+European Union, Copernicus Emergency Management Service data.
+
+Reference: Copernicus EMS rapid mapping grading products, made by photo
+interpretation of very high resolution images (0.3 to 1 m) taken on 27 and
+28 August. Three of its six areas lie inside our full box. Two areas were
+cancelled by EMS for cloud; one lies outside our box. EMS labels the event
+"mass movement", not flood water.
+
+Run validated: full box, commit of 10 Oct, default settings. Matching
+distances: buildings 15 m, roads 15 m, bridges 30 m.
+
+| Area (reference product) | Ref km2 | Ours km2 | IoU | Precision | Recall |
+|---|---|---|---|---|---|
+| Syapru Besi (upper gorge) | 1.111 | 0.181 | 0.163 | 0.998 | 0.163 |
+| Timure (upper gorge, border) | 1.294 | 0.275 | 0.211 | 0.997 | 0.212 |
+| Bidur, first product | 5.886 | 3.368 | 0.437 | 0.835 | 0.478 |
+| Bidur, monitoring update | 7.011 | 3.397 | 0.473 | 0.984 | 0.477 |
+
+| Area | Buildings recall | Buildings precision | Roads recall | Roads precision | Bridges recall | Bridges precision |
+|---|---|---|---|---|---|---|
+| Syapru Besi | 64/355 (0.18) | 35/47 (0.74) | 2.2/6.2 km (0.35) | 0.83 | 2/5 | 2/2 |
+| Timure | 67/405 (0.17) | 53/90 (0.59) | 1.6/9.5 km (0.17) | 0.62 | 0/1 | 0/3 |
+| Bidur, monitoring update | 1333/2725 (0.49) | 1008/1205 (0.84) | 21.0/41.2 km (0.51) | 0.81 | 14/24 | 16/22 |
+
+Reading the scores:
+
+- **Precision is high, recall is low.** What we map is almost always inside
+  the reference area (0.98 to 1.00 against the most complete products), but
+  we find only half of it in the wide lower valley and a sixth to a fifth in
+  the gorge.
+- The gorge is the weak point, as predicted from the radar blind zones. The
+  reference deposit there is about 1.1 to 1.3 km2 per area; our corridor
+  (ground within 20 m above the river) and strict optical rules capture
+  only the core of it.
+- Bidur precision is 0.835 against the first product and 0.984 against the
+  later update. The update maps more area, so part of our "false" area in
+  the first comparison was real damage the first product had not yet mapped.
+  A reference map is not complete truth either.
+- Building precision in Timure is only 0.59 and bridges there score 0 of 3.
+  Part of Timure's reference area is across the border; OSM coverage there
+  differs. Not investigated further.
+- Building recall is limited twice: by our low extent recall, and because
+  the reference counts buildings that are not in OpenStreetMap at all.
+- These scores were measured after the design was fixed. Earlier, looser
+  settings (40 m corridor, loose optical rule) mapped far more area in the
+  gorge and would probably score higher recall here, but they also failed
+  our own no-flood tests. We did not go back and loosen them to raise the
+  score.
+
+## Cut-off analysis with buffer and two levels (full box)
+
+- Routing network: box plus 15 km. 15 towns and 450 health facilities in
+  that area (1 town and 17 before). 780,000 road edges; 1,631 broken.
+- No vehicle road: 46 of 182 settlements (12,083 buildings). 45 cut off
+  from a town, 28 from every hospital.
+- No route at all, even on foot: 8 settlements (2,264 buildings).
+- 66 settlements had no vehicle road even before the flood, and 30 had no
+  mapped route of any kind. These are reported separately.
+- Bridges with the 25 m bank rule: 31 of 217 hit (17 high, 14 medium), 4
+  exposed.
