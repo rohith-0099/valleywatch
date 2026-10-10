@@ -1,0 +1,16 @@
+# Copernicus Data Space access
+openeo
+requests
+# Raster and vector processing
+numpy
+scipy
+scikit-image
+rasterio
+geopandas
+shapely
+pyproj
+# Quick-look images
+matplotlib
+# Config and tests
+python-dotenv
+pytest

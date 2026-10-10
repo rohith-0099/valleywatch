@@ -1,0 +1,26 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+
+# Downloaded and derived data (rasters, caches, outputs) never go in git
+data/
+outputs/
+*.tif
+*.tiff
+*.nc
+*.zip
+*.SAFE/
+
+# Reference repos cloned for study only
+reference_repos/
