@@ -579,3 +579,116 @@ into the dashboard, Analyse pressed, nothing cached.
 - Nepali: the fixed labels and limitation sentences were written by the AI
   assistant and have NOT been reviewed by a Nepali speaker. The model writes
   Nepali with some English loan words ("कट-अफ").
+
+## Quick mode against EMSR927 (measured once, nothing tuned)
+
+European Union, Copernicus Emergency Management Service data. Full box,
+one radar track.
+
+| Area | Extent recall quick / thorough | Extent precision quick / thorough | Buildings recall quick / thorough | Roads recall quick / thorough | Bridges found quick / thorough |
+|---|---|---|---|---|---|
+| Syapru Besi | 0.359 / 0.381 | 0.992 / 0.992 | 0.55 / 0.56 | 0.55 / 0.58 | 4 of 5 / 4 of 5 |
+| Timure | 0.299 / 0.333 | 0.992 / 0.993 | 0.20 / 0.52 | 0.24 / 0.33 | 0 of 1 / 0 of 1 |
+| Bidur (update) | 0.557 / 0.639 | 0.954 / 0.949 | 0.58 / 0.62 | 0.65 / 0.72 | 13 of 24 / 16 of 24 |
+
+- Quick mode loses 2 to 8 points of extent recall. The large drop is
+  building recall in Timure (0.52 to 0.20): the settlement there sits where
+  only the second track sees the change.
+
+## Routing buffer: main roads only was tried and rejected as default
+
+Asked for: fetch only main roads, towns and hospitals in the 15 km buffer.
+Result on three boxes, "no route at all" settlements:
+
+| Box | All roads in buffer | Main roads only |
+|---|---|---|
+| Small box | 0 | 9 |
+| Betrawati box | 1 | 7 |
+| Full box | 9 | 47 |
+
+- With only main roads outside the box, the walking detours around the box
+  edge are unknown, so many settlements are wrongly reported as having no
+  route at all. The most serious category grew five-fold.
+- Decision taken: keep ALL roads in the buffer as the default
+  (`routing_buffer_roads = "all"`; `"main"` remains available). The speed
+  goal is met another way: map data is now fetched at the same time as the
+  satellite images, so it adds no waiting. Towns are limited to places
+  tagged town or city in both modes.
+- Cost that remains: building the road graph takes 11 s (small box), 44 s
+  (Betrawati box) and 95 s (full box).
+- Dashboard: the flood map appears as soon as it is ready (23 s into a
+  cached run), damage and cut-off follow (94 s including both reports).
+
+## Copilot: placeholders instead of typed numbers
+
+- The model no longer types numbers. Every fact comes with a placeholder
+  such as `{buildings_hit}`; code fills in the value and its unit. A row of
+  a list (settlement with its building count) is one placeholder, so names
+  and numbers cannot be mixed between rows.
+- The check is now simple: any digit or number word the model typed outside
+  a placeholder rejects the text; so does a placeholder that does not exist.
+- This closes the weakness noted earlier (a correct number attached to the
+  wrong thing).
+- First version left units off ("0.808 of new water") because the model
+  may not type "km2" safely. Units are now part of the filled-in text.
+- Asked for a percentage it would have had to calculate, the model answered
+  "The data does not contain that percentage."
+- The report is generated once at the end of each run, in both languages,
+  and cached.
+- Style cost: sentences built around whole-row placeholders read stiffly.
+
+## Other flood events (10 Oct, night). Runs only; no reference maps used
+
+Quick mode, small boxes, default settings, nothing changed for any event.
+Sentinel-1 pairs existed for all four. All four ran to the end.
+
+| Event | Flood date | Radar pair | Optical clear | Water km2 | Debris km2 | No-flood share | Buildings hit / mapped | Not mappable |
+|---|---|---|---|---|---|---|---|---|
+| South Lhonak GLOF, Teesta, Sikkim | 4 Oct 2023 | 25 Sep to 7 Oct, orbit 12 | 87% | 0.440 | 0.925 | 0.0% | 239 / 777 | 80% |
+| Melamchi, Nepal | 15 Jun 2021 | 8 to 20 Jun, orbit 19 | 89% | 0.464 | 0.826 | 0.0% | 112 / 18,209 | 32% |
+| Chamoli, India | 7 Feb 2021 | 29 Jan to 10 Feb, orbit 56 | 76% | 0.060 | 0.512 | 0.0% | 0 / 104 | 66% |
+| Kerala lowland (Kuttanad) | 16 Aug 2018 | 9 to 21 Aug, orbit 165 | 68% | 29.294 | 1.740 | 17.3% | 2 / 28 | 0.6% |
+
+What worked:
+
+- Scene picking, downloads, corridor, both acceptance tests, OSM snapshot
+  for 2018 to 2023, damage and cut-off all ran unchanged on other valleys,
+  other years and Sentinel-1A instead of 1D.
+- The three mountain events pass the no-flood test with 0.0%. In the Sikkim
+  quick-look the detections follow the Teesta and the side valleys stay
+  clean.
+
+What broke or looks wrong:
+
+- **Kerala fails the no-flood budget: 17.3%.** The debris class there is
+  pure noise: 3.98 km2 on the no-flood pair against 2.96 km2 on the flood
+  pair (135%). Rice paddies change roughness between any two dates. A
+  debris class has no meaning in a lowland river flood and should be
+  switched off there.
+- **Kerala: the adaptive threshold hit its upper limit (6.0 dB).** The
+  method assumes most of the image did not flood. In Kuttanad a large part
+  did, so the "noise level" was inflated by the flood itself. Real flood
+  water weaker than 6 dB was missed; 29 km2 is an under-estimate.
+- Kerala: the corridor and reach zone cover the whole box (196 km2), because
+  everything is within 20 m of river level. The corridor filter does nothing
+  on a plain. That is acceptable but means no protection either.
+- Kerala: 59.8 km2 is "permanent water" (backwaters and flooded paddies in
+  the before image), so flooding of already wet fields is not reported.
+- **OpenStreetMap coverage decides the damage numbers.** Kerala 2018: only
+  28 buildings mapped in 274 km2, so "2 buildings hit" is meaningless, and
+  the five cut-off settlements show 0 buildings. Chamoli: 104 buildings
+  mapped, 0 hit. Sikkim: no place nodes at all inside the box, so no
+  settlement could be assessed.
+- Chamoli and Melamchi: 0 settlements cut off although both events destroyed
+  roads and bridges. Chamoli has 0 of 4 bridges hit and 0.29 km of road. Not
+  checked against any reference; likely low recall, as in the EMSR927 gorge
+  areas.
+- Chamoli is a winter event. The optical vegetation-loss rule needs green
+  ground before the event; under snow it has little to work with.
+- Sikkim: 80% of the box is not mappable by radar and 12% of the valley
+  floor is blind with one track.
+- Speed: cold runs took 5.0 to 8.0 minutes for boxes of 153 to 274 km2,
+  with repeated `429` waits.
+- None of these four results has been compared with a reference map. They
+  show that the system runs elsewhere and where its self-check fails; they
+  say nothing about accuracy.

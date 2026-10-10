@@ -151,10 +151,12 @@ cd backend && ../.venv/bin/python -m pytest
    town and hospital, and the broken link is identified.
 
 10. **Copilot and report** (`backend/copilot/`): the language model (Groq)
-    can only call functions that read the run's output files. Every number
-    in its text is checked against those results before display. The
-    one-page report's figures are written by code; the model writes only
-    the summary paragraph.
+    can only call functions that read the run's output files. It may not
+    type numbers: each fact comes with a placeholder such as
+    `{buildings_hit}` and code fills in the value and unit. Text containing
+    a typed number or an unknown placeholder is rejected. The one-page
+    report's figures are written by code; the model writes only the summary
+    paragraph. The report is generated once when a run finishes.
 
 ### OpenStreetMap snapshot method
 
