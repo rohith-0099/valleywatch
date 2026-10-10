@@ -505,3 +505,77 @@ Damage, against "destroyed" and "damaged" in the reference:
   investigated.
 - The "possibly affected" tier adds 8 to 11 points of building recall for
   3 to 4 points of precision.
+
+## Quick and thorough modes (10 Oct, night)
+
+The second radar track is now optional ("thorough" mode, `--thorough` or the
+switch in the dashboard). Quick mode is the default for live runs.
+
+| Run | Mode | Water km2 | Debris km2 | No-flood share | Buildings hit | Roads hit km | Bridges hit | No vehicle road / no route |
+|---|---|---|---|---|---|---|---|---|
+| Full box | quick | 1.685 | 5.211 | 2.2% | 1,753 | 40.0 | 35 | 47 / 9 |
+| Full box | thorough | 3.321 | 4.769 | 3.8% | 1,997 | 46.0 | 40 | 47 / 9 |
+| Small box | quick | 0.037 | 0.631 | 0.0% | 136 | 4.1 | 5 | 10 / 0 |
+| Small box | thorough | 0.065 | 0.631 | 0.0% | 145 | 4.4 | 5 | 10 / 0 |
+
+- The second track mostly adds water (1.69 to 3.32 km2 on the full box).
+  The cut-off result is the same in both modes.
+- Water seen only by the second track is now scored low confidence. Its
+  after image (5 Sep) is ten days after the flood, so part of that water is
+  ordinary river change. In thorough mode the no-flood test gives 7.6% for
+  water alone, above the 5% budget, while the total (3.8%) is inside it. We
+  decided not to tighten further and to report this as a limitation.
+- **The EMSR927 scores above were measured on the thorough run.** Quick mode
+  has not been validated against EMSR927; it maps less water, so its recall
+  is probably lower.
+
+## Live run from the dashboard (the judges' path)
+
+Box 85.13 27.90 85.21 27.98 (8 x 9 km near Betrawati), chosen fresh, typed
+into the dashboard, Analyse pressed, nothing cached.
+
+- Finished without error in about 6 minutes: 3 min 42 s for the flood map
+  (seven downloads, two at a time, with several `429` retries), the rest for
+  OpenStreetMap, mostly the 15 km routing buffer (13,202 roads).
+- Result: 0.808 km2 water, 1.601 km2 debris, 836 buildings hit, 16 of 28
+  bridges, 2 settlements without a vehicle road, 1 with no route at all.
+  No-flood share 0.5%.
+- Bugs found and fixed on the way to this test:
+  - MapLibre 6 could not start its worker under the Next.js bundler; the
+    dashboard uses MapLibre 4.
+  - The map had zero height because MapLibre's own stylesheet overrides the
+    container position.
+  - Opening a run before the base map had loaded failed silently; loading
+    now waits for the map and shows errors.
+- Still slow for a demo: 6 minutes cold. A repeat of the same box takes
+  about 30 seconds from cache.
+
+## Copilot and situation report
+
+- Model: `openai/gpt-oss-120b` on Groq, chosen from the models the key can
+  use. It gets eight functions that read the run's output files and nothing
+  else.
+- Number check: every figure in an answer must equal a value the functions
+  returned (or that value rounded). Devanagari digits and the words two to
+  twelve are checked too. On failure the model gets one retry; if it fails
+  again the answer is marked "not verified" in the dashboard, and the
+  report falls back to a fixed sentence built from the same figures.
+- Tests so far: "Which villages cannot reach a hospital by vehicle?" gave
+  five names with building counts, all verified. A Nepali question about
+  bridges and cut-off settlements was answered in Nepali, verified. "How
+  many people died?" was answered "The data does not contain a death count."
+- The report page is built by code: every figure in its tables is written
+  from the output files, not by the model. The model writes only the summary
+  paragraph, in English or Nepali, and that paragraph passes the same check.
+- Groq free tier allows 8,000 tokens per minute. Two reports in a row hit
+  `429`; the report then used the fixed sentence. Retries with a wait were
+  added. Several judges asking at once could still hit the limit.
+- Weakness found: the model wrote "Two settlements" as a word, which the
+  first version of the check did not see. Number words are now checked and
+  the prompt asks for digits.
+- Weakness not fixed: the check proves a number EXISTS in the data, not that
+  it is attached to the right thing. "40 buildings hit" would pass if 40 is
+  the bridge count.
+- Nepali: the fixed labels and limitation sentences were written by the AI
+  assistant and have NOT been reviewed by a Nepali speaker. The model writes
+  Nepali with some English loan words ("कट-अफ").

@@ -15,11 +15,12 @@ IIT Mandi), Track B: Mapping Flood Damage from Space.
 | 3. Sentinel-2 check (per-pixel cloud mask) | working |
 | 4. Damage overlay (OpenStreetMap buildings, roads, bridges) | working |
 | 5. Cut-off settlement analysis | working |
-| 6. Copilot and situation report (English, Nepali) | not started |
+| 6. Copilot and situation report (English, Nepali) | working |
 | 7. Validation against EMSR927 | working (scores in FINDINGS.md) |
 | 8. Flood-path tracing | not started |
 | Dashboard (map, layers, totals, cut-off list, live progress) | working |
-| Dashboard report button, swipe slider, flood path | not started |
+| Dashboard report buttons and copilot chat | working |
+| Dashboard swipe slider, flood path | not started |
 
 ## Prerequisites
 
@@ -53,7 +54,10 @@ cd backend
 ../.venv/bin/python -m valleywatch.pipeline --bbox WEST SOUTH EAST NORTH --date YYYY-MM-DD
 ```
 
-Boxes up to 400 km2 are fetched by direct download and finish in a few
+Add `--thorough` to also use a second radar track that looks from the
+opposite side (fills radar blind zones, three more downloads).
+
+Boxes up to 400 km2 are fetched by direct download and finish in about six
 minutes. Larger boxes need `--large` and use slow batch jobs (about 25
 minutes for 1,800 km2 the first time). Downloads are cached in `data/`, so a
 repeated run takes about a minute and costs no quota.
@@ -78,7 +82,9 @@ cd backend && ../.venv/bin/uvicorn api:app --port 8000
 cd frontend && npm install && npm run dev      # http://localhost:3000
 ```
 
-Draw a box (up to 400 km2), pick the flood date, press Analyse. Finished runs
+Draw a box (up to 400 km2), pick the flood date, press Analyse. When it
+finishes, the right panel offers the one-page situation report (English or
+Nepali, printable) and the copilot chat. Finished runs
 can be reopened from the "Earlier runs" list. The base map is for display
 only; the analysis uses the pre-event OpenStreetMap snapshot.
 
@@ -143,6 +149,12 @@ cd backend && ../.venv/bin/python -m pytest
 9. **Cut-off analysis** (`cutoff.py`): a road graph with hit sections and hit
    bridges removed; each settlement is tested for a route to the nearest
    town and hospital, and the broken link is identified.
+
+10. **Copilot and report** (`backend/copilot/`): the language model (Groq)
+    can only call functions that read the run's output files. Every number
+    in its text is checked against those results before display. The
+    one-page report's figures are written by code; the model writes only
+    the summary paragraph.
 
 ### OpenStreetMap snapshot method
 
