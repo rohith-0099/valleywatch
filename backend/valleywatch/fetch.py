@@ -117,8 +117,8 @@ def sentinel2_clear_composite_cube(conn, bbox, start, end, resolution_m):
                                       projection=utm_epsg_for(bbox))
 
 
-def _download_with_retry(request, partial, progress, attempts=6):
-    """Direct download with retries.
+def _with_retry(action, label, progress, attempts=6):
+    """Run a server request, retrying after a wait when the server is busy.
 
     The free tier limits how many requests run at once (HTTP 429) and the
     service sometimes fails on its own side (HTTP 5xx). Both usually pass
@@ -126,36 +126,36 @@ def _download_with_retry(request, partial, progress, attempts=6):
     """
     for attempt in range(1, attempts + 1):
         try:
-            request["cube"].download(str(partial), format="GTiff")
-            return
+            return action()
         except openeo.rest.OpenEoApiPlainError as error:
             status = error.http_status_code or 0
             if not (status == 429 or status >= 500) or attempt == attempts:
                 raise
             wait_s = 15 * attempt
-            progress(f"{request['label']}: server answered {status}, retrying in {wait_s} s")
+            progress(f"{label}: server answered {status}, retrying in {wait_s} s")
             time.sleep(wait_s)
 
 
 def _download_one(request, use_batch, progress):
     """Fetch one raster, unless a previous run already cached it."""
-    path = Path(request["path"])
+    path, label = Path(request["path"]), request["label"]
     if path.exists():
-        progress(f"{request['label']}: using cached file")
+        progress(f"{label}: using cached file")
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
     # Write to a temporary name first so an interrupted download can never
     # be mistaken for a complete cached file.
     partial = path.with_suffix(".part.tif")
-    progress(f"{request['label']}: requested")
+    progress(f"{label}: requested")
     if use_batch:
-        request["cube"].execute_batch(
-            str(partial), out_format="GTiff", title=f"ValleyWatch {request['label']}",
-            print=lambda message: progress(f"{request['label']}: {message}"))
+        _with_retry(lambda: request["cube"].execute_batch(
+            str(partial), out_format="GTiff", title=f"ValleyWatch {label}",
+            print=lambda message: progress(f"{label}: {message}")), label, progress)
     else:
-        _download_with_retry(request, partial, progress)
+        _with_retry(lambda: request["cube"].download(str(partial), format="GTiff"),
+                    label, progress)
     partial.rename(path)
-    progress(f"{request['label']}: done")
+    progress(f"{label}: done")
     return path
 
 

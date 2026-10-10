@@ -24,3 +24,6 @@ outputs/
 
 # Reference repos cloned for study only
 reference_repos/
+
+# Browser test artefacts
+.playwright-mcp/

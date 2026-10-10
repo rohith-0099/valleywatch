@@ -1,0 +1,101 @@
+:root {
+  --ink: #0d1315;
+  --panel: #141c1f;
+  --panel-2: #1b2529;
+  --line: #2a373c;
+  --text: #e4ebe7;
+  --muted: #8a9a98;
+  --water: #2bb6ff;
+  --debris: #ff8a1f;
+  --cut: #ff4136;
+  --warn: #ffd23f;
+  --ok: #5fd38d;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--font-body), "Noto Sans Devanagari", sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.shell { display: grid; grid-template-columns: 290px 1fr 360px; grid-template-rows: 1fr auto; height: 100vh; }
+.panel { background: var(--panel); overflow-y: auto; padding: 16px 16px 24px; }
+.panel.left { border-right: 1px solid var(--line); }
+.panel.right { border-left: 1px solid var(--line); }
+.mapwrap { position: relative; min-width: 0; min-height: 0; }
+/* MapLibre sets position: relative on its container, so size it explicitly. */
+.map { width: 100%; height: 100%; }
+
+.brand { font-family: var(--font-display); font-size: 34px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1; }
+.brand span { color: var(--debris); }
+.tagline { color: var(--muted); margin: 6px 0 4px; }
+.proto { display: inline-block; margin-top: 8px; padding: 3px 8px; border: 1px solid var(--warn); color: var(--warn); font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+
+h2 { font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+
+label { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 3px; }
+input, select { width: 100%; background: var(--ink); border: 1px solid var(--line); color: var(--text); padding: 7px 8px; font-family: var(--font-mono); font-size: 12.5px; border-radius: 2px; }
+input:focus, select:focus { outline: 1px solid var(--debris); border-color: var(--debris); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.field { margin-bottom: 8px; }
+
+button { font-family: var(--font-display); font-size: 16px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; border-radius: 2px; padding: 8px 10px; width: 100%; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); transition: background 0.15s, border-color 0.15s; }
+button:hover:not(:disabled) { border-color: var(--text); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { background: var(--debris); border-color: var(--debris); color: #1a0f00; margin-top: 6px; }
+button.primary:hover:not(:disabled) { background: #ffa04a; }
+button.active { border-color: var(--warn); color: var(--warn); }
+.hint { color: var(--muted); font-size: 11.5px; margin: 6px 0 10px; }
+.error { color: var(--cut); margin-top: 8px; }
+
+.steps { list-style: none; font-family: var(--font-mono); font-size: 11.5px; }
+.steps li { padding: 3px 0 3px 16px; position: relative; color: var(--muted); animation: rise 0.25s ease-out; }
+.steps li::before { content: ""; position: absolute; left: 2px; top: 9px; width: 6px; height: 6px; background: var(--ok); }
+.steps li.live { color: var(--text); }
+.steps li.live::before { background: var(--warn); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0.2; } }
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+
+.stat { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 7px 8px; margin-bottom: 4px; background: var(--panel-2); border: 1px solid transparent; border-left: 3px solid var(--line); font-family: var(--font-body); font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.stat b { font-family: var(--font-mono); font-size: 17px; font-weight: 500; }
+.stat small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+.stat.water { border-left-color: var(--water); }
+.stat.debris { border-left-color: var(--debris); }
+.stat.cut { border-left-color: var(--cut); }
+.stat.warn { border-left-color: var(--warn); }
+
+.settle { display: block; width: 100%; text-align: left; padding: 8px; margin-bottom: 4px; background: var(--panel-2); border: 1px solid transparent; border-left: 3px solid var(--warn); font-family: var(--font-body); font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.settle.all { border-left-color: var(--cut); }
+.settle.picked { border-color: var(--text); }
+.settle .name { font-weight: 600; font-size: 14px; }
+.settle .meta { color: var(--muted); font-size: 11.5px; }
+.tag { display: inline-block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 5px; margin-right: 4px; border: 1px solid currentColor; }
+.tag.all { color: var(--cut); }
+.tag.vehicle { color: var(--warn); }
+
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12px; }
+.kv dt { color: var(--muted); }
+.kv dd { font-family: var(--font-mono); font-size: 11.5px; }
+
+.legend { position: absolute; left: 12px; bottom: 12px; background: rgba(13, 19, 21, 0.92); border: 1px solid var(--line); padding: 10px 12px; min-width: 215px; backdrop-filter: blur(4px); }
+.legend h3 { font-family: var(--font-display); font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.legend label { display: flex; align-items: center; gap: 8px; text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--text); margin: 3px 0; cursor: pointer; }
+.legend input { width: auto; }
+.swatch { width: 14px; height: 10px; flex: none; }
+.pass { position: absolute; top: 12px; left: 12px; background: rgba(13, 19, 21, 0.92); border: 1px solid var(--line); border-left: 3px solid var(--warn); padding: 6px 10px; font-family: var(--font-mono); font-size: 11.5px; }
+
+.footer { grid-column: 1 / -1; background: #090d0e; border-top: 1px solid var(--line); padding: 6px 14px; color: var(--muted); font-size: 10.5px; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.footer strong { color: var(--warn); font-weight: 500; }
+
+.maplibregl-popup-content { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 2px; font-family: var(--font-body); font-size: 12px; padding: 8px 10px; }
+.maplibregl-popup-tip { display: none; }
+.maplibregl-ctrl-attrib { font-size: 10px; }
+
+@media (max-width: 1100px) {
+  .shell { grid-template-columns: 1fr; grid-template-rows: auto 60vh auto auto; height: auto; }
+  .mapwrap { height: 60vh; }
+}
