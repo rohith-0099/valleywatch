@@ -1,4 +1,4 @@
-"""Run Steps 1 to 3 end to end: area + flood date -> flood and debris map."""
+"""Run the analysis end to end: area + flood date -> flood map and damage list."""
 import argparse
 import json
 import sys
@@ -6,6 +6,7 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
+import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.warp import Resampling, reproject
@@ -13,8 +14,10 @@ from rasterio.warp import Resampling, reproject
 from . import fetch
 from .config import Settings
 from .corridor import river_corridor
+from .damage import assess_damage
 from .flood_mask import CLASS_DEBRIS, CLASS_WATER, detect_flood_and_debris
 from .optical import fuse_with_optical, optical_evidence
+from .osm import fetch_osm_layers
 from .quicklook import save_quicklook
 from .scene_picker import list_sentinel2_scenes, pick_sentinel1_pair
 from .terrain import terrain_mask
@@ -220,6 +223,40 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     return summary
 
 
+def run_damage_overlay(bbox, flood_date, settings=None, data_dir=None, output_dir=None,
+                       progress=print):
+    """Step 4: overlay pre-event OpenStreetMap on the flood map of this run."""
+    settings = settings or Settings()
+    name = _run_name(bbox, flood_date)
+    data_dir = Path(data_dir or REPO_ROOT / "data" / name)
+    output_dir = Path(output_dir or REPO_ROOT / "outputs" / name)
+
+    progress("Checking roads and buildings")
+    layers, snapshot = fetch_osm_layers(bbox, flood_date, data_dir, progress)
+    hazards = gpd.read_file(output_dir / "flood_debris.geojson")
+    damage = assess_damage(hazards, layers, fetch.utm_epsg_for(bbox), settings)
+    for layer in ("buildings_hit", "road_hits", "bridges"):
+        damage[layer].to_file(output_dir / f"{layer}.geojson", driver="GeoJSON")
+
+    # Add the damage figures to the run summary written by the flood step.
+    summary_path = output_dir / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["openstreetmap"] = {"snapshot_date": snapshot.isoformat(),
+                                "features": {k: int(len(v)) for k, v in layers.items()}}
+    summary["damage"] = damage["totals"]
+    if "© OpenStreetMap contributors." not in summary["attribution"]:
+        summary["attribution"].append("© OpenStreetMap contributors.")
+    summary_path.write_text(json.dumps(summary, indent=2))
+    print(json.dumps(damage["totals"], indent=2))
+    return summary
+
+
+def run_analysis(bbox, flood_date, settings=None, progress=print):
+    """Everything built so far, in order."""
+    run_flood_mapping(bbox, flood_date, settings, progress=progress)
+    return run_damage_overlay(bbox, flood_date, settings, progress=progress)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bbox", nargs=4, type=float, required=True,
@@ -234,7 +271,7 @@ def main():
         sys.exit(f"The box covers {area:.0f} km2. Live runs are limited to "
                  f"{settings.max_live_area_km2:.0f} km2 so they finish in minutes. "
                  "Choose a smaller box, or add --large to run slow batch jobs.")
-    run_flood_mapping(tuple(args.bbox), date.fromisoformat(args.date), settings)
+    run_analysis(tuple(args.bbox), date.fromisoformat(args.date), settings)
 
 
 if __name__ == "__main__":
