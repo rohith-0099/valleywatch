@@ -1,18 +1,23 @@
-"""Run Steps 1 and 2 end to end: area + flood date -> flood and debris map."""
+"""Run Steps 1 to 3 end to end: area + flood date -> flood and debris map."""
 import argparse
 import json
-from datetime import date
+import sys
+import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
 import rasterio
 from rasterio.warp import Resampling, reproject
 
-from . import s1_fetch
+from . import fetch
 from .config import Settings
+from .corridor import river_corridor
 from .flood_mask import CLASS_DEBRIS, CLASS_WATER, detect_flood_and_debris
+from .optical import fuse_with_optical, optical_evidence
 from .quicklook import save_quicklook
 from .scene_picker import list_sentinel2_scenes, pick_sentinel1_pair
+from .terrain import terrain_mask
 from .vectorize import masks_to_polygons
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +32,7 @@ def _read_onto_grid(path, grid):
     """Read a raster and resample it onto the reference grid.
 
     Separate downloads can differ by a pixel in size or origin. Putting all
-    three rasters on one grid makes pixel-by-pixel comparison valid.
+    rasters on one grid makes pixel-by-pixel comparison valid.
     """
     with rasterio.open(path) as src:
         bands = np.full((src.count, grid["height"], grid["width"]), np.nan, dtype=np.float32)
@@ -38,52 +43,120 @@ def _read_onto_grid(path, grid):
     return bands
 
 
-def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir=None):
-    """Map new water and debris for a bounding box (W, S, E, N) and flood date."""
+def _timed_progress(progress):
+    """Wrap a progress callback so every message carries the elapsed time."""
+    started = time.time()
+
+    def report(message):
+        elapsed = int(time.time() - started)
+        progress(f"[{elapsed // 60:02d}:{elapsed % 60:02d}] {message}")
+    return report
+
+
+def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir=None,
+                      progress=print):
+    """Map new water and debris for a bounding box (W, S, E, N) and flood date.
+
+    `progress` receives one short text message per step; the dashboard uses
+    it to show what the pipeline is doing.
+    """
     settings = settings or Settings()
+    report = _timed_progress(progress)
     name = _run_name(bbox, flood_date)
     data_dir = Path(data_dir or REPO_ROOT / "data" / name)
     output_dir = Path(output_dir or REPO_ROOT / "outputs" / name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Step 1: choose scenes.
+    # ---- Step 1: choose scenes -------------------------------------------
+    report("Finding satellite scenes")
     pair = pick_sentinel1_pair(bbox, flood_date, settings)
-    print(pair["reason"])
-    sentinel2 = list_sentinel2_scenes(bbox, flood_date, settings)
+    report(pair["reason"])
+    sentinel2_scenes = list_sentinel2_scenes(bbox, flood_date, settings)
 
-    # Step 2a: download backscatter for both dates and the DEM.
-    conn = s1_fetch.connect()
+    # ---- Step 2a: download everything, several requests at a time ---------
+    report("Downloading radar images, elevation and optical images")
+    conn = fetch.connect()
     track = f"orbit{pair['relative_orbit']}"
-    paths = {}
-    for side in ("before", "after"):
+    resolution = settings.resolution_m
+    requests = []
+    for side in ("before", "after", "baseline"):
+        if pair[side] is None:
+            continue
         day = pair[side]["date"]
-        print(f"Fetching {side} image ({day}) ...")
-        paths[side] = s1_fetch.fetch_backscatter(
-            conn, bbox, day, pair["direction"],
-            data_dir / f"s1_{side}_{day}_{track}.tif", settings.resolution_m)
-    print("Fetching Copernicus DEM ...")
-    paths["dem"] = s1_fetch.fetch_dem(conn, bbox, data_dir / "dem.tif", settings.resolution_m)
+        requests.append({
+            "label": f"radar {side} ({day})",
+            "cube": fetch.backscatter_cube(conn, bbox, day, pair["direction"], resolution),
+            "path": data_dir / f"s1_{side}_{day}_{track}.tif",
+            # The flood map needs before and after; the baseline is a bonus.
+            "optional": side == "baseline", "key": side})
+    requests.append({"label": "elevation", "cube": fetch.dem_cube(conn, bbox, resolution),
+                     "path": data_dir / "dem.tif", "optional": False, "key": "dem"})
+    optical_windows = {
+        "before": (flood_date - timedelta(days=settings.search_days_before), flood_date),
+        "after": (flood_date + timedelta(days=1),
+                  flood_date + timedelta(days=settings.search_days_after + 1))}
+    for side, (start, end) in optical_windows.items():
+        requests.append({
+            "label": f"optical {side} ({start} to {end})",
+            "cube": fetch.sentinel2_clear_composite_cube(conn, bbox, start, end, resolution),
+            "path": data_dir / f"s2_{side}_{start}_{end}.tif",
+            "optional": True, "key": f"s2_{side}"})
+    downloaded = fetch.download_all(requests, bbox, settings, report)
+    paths = {r["key"]: downloaded[r["label"]] for r in requests}
 
-    # Step 2b: put everything on the grid of the before image.
+    def available(key):
+        return isinstance(paths.get(key), Path)
+
+    # ---- Step 2b: put everything on the grid of the before image ----------
+    report("Aligning images")
     with rasterio.open(paths["before"]) as src:
         grid = {"transform": src.transform, "crs": src.crs,
                 "height": src.height, "width": src.width}
         bounds = src.bounds
     pixel_m = abs(grid["transform"].a)
-    stacks = {side: _read_onto_grid(paths[side], grid) for side in ("before", "after")}
+
+    def radar_image(key):
+        stack = _read_onto_grid(paths[key], grid)
+        return {"VV": stack[0], "VH": stack[1]}
+
+    before, after = radar_image("before"), radar_image("after")
+    baseline = radar_image("baseline") if available("baseline") else None
     dem = _read_onto_grid(paths["dem"], grid)[0]
-    before = {"VV": stacks["before"][0], "VH": stacks["before"][1]}
-    after = {"VV": stacks["after"][0], "VH": stacks["after"][1]}
 
-    # Step 2c: classify.
-    result = detect_flood_and_debris(before, after, dem, pixel_m,
-                                     pair["direction"], settings)
+    # ---- Step 2c: terrain masks and river corridor from the DEM -----------
+    report("Finding the river corridor and radar blind zones")
+    terrain = terrain_mask(dem, pixel_m, pair["direction"], settings)
+    corridor = river_corridor(dem, grid["transform"], grid["crs"], settings)["corridor"]
 
-    # Outputs.
+    # ---- Step 2d: classify -------------------------------------------------
+    report("Detecting flood and debris")
+    result = detect_flood_and_debris(before, after, terrain, corridor, pixel_m,
+                                     settings, baseline=baseline)
+    radar_only = {
+        "water_km2": float((result["classes"] == CLASS_WATER).sum()) * pixel_m ** 2 / 1e6,
+        "debris_km2": float((result["classes"] == CLASS_DEBRIS).sum()) * pixel_m ** 2 / 1e6}
+
+    # ---- Step 3: optical check where the sky was clear ---------------------
+    if available("s2_before") and available("s2_after"):
+        report("Checking against optical images")
+        bands = fetch.S2_BANDS
+        s2_before = dict(zip(bands, _read_onto_grid(paths["s2_before"], grid)))
+        s2_after = dict(zip(bands, _read_onto_grid(paths["s2_after"], grid)))
+        fuse_with_optical(result, optical_evidence(s2_before, s2_after, settings),
+                          pixel_m, settings)
+    else:
+        report("No usable optical images; result is from radar only")
+        result["source"] = (result["classes"] > 0).astype(np.uint8)
+        result["optical"] = {"used": False, "reason": "No Sentinel-2 composite available: "
+                             + "; ".join(str(paths[k]) for k in ("s2_before", "s2_after")
+                                         if not available(k))}
+
+    # ---- Outputs -------------------------------------------------------------
+    report("Writing outputs")
     polygons = masks_to_polygons(result["classes"], result["confidence"],
-                                 result["change_vv_db"], grid["transform"], grid["crs"])
-    geojson_path = output_dir / "flood_debris.geojson"
-    polygons.to_file(geojson_path, driver="GeoJSON")
+                                 result["change_vv_db"], result["source"],
+                                 grid["transform"], grid["crs"])
+    polygons.to_file(output_dir / "flood_debris.geojson", driver="GeoJSON")
 
     pixel_km2 = pixel_m ** 2 / 1e6
     mapped = result["has_data"]
@@ -91,18 +164,31 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
         "inputs": {"bbox_west_south_east_north": list(bbox),
                    "flood_date": flood_date.isoformat()},
         "sentinel1": pair,
-        "sentinel2_candidates": sentinel2,
+        "sentinel2": {
+            "windows": {side: [start.isoformat(), end.isoformat()]
+                        for side, (start, end) in optical_windows.items()},
+            "check": result["optical"],
+            "scenes_in_catalogue": sentinel2_scenes},
         "grid": {"crs": str(grid["crs"]), "pixel_m": pixel_m,
                  "width": grid["width"], "height": grid["height"]},
         "thresholds": result["thresholds"],
+        "baseline": result["baseline"],
         "totals": {
             "water_km2": round(float((result["classes"] == CLASS_WATER).sum()) * pixel_km2, 3),
             "debris_km2": round(float((result["classes"] == CLASS_DEBRIS).sum()) * pixel_km2, 3),
+            "radar_only_water_km2": round(radar_only["water_km2"], 3),
+            "radar_only_debris_km2": round(radar_only["debris_km2"], 3),
             "water_polygons": int((polygons["hazard"] == "water").sum()),
             "debris_polygons": int((polygons["hazard"] == "debris").sum()),
-            # How much of the area the radar could not judge at all.
+            "polygons_by_confidence": polygons["confidence_level"].value_counts().to_dict(),
+            "polygons_by_source": polygons["source"].value_counts().to_dict(),
+            "corridor_km2": round(float((corridor & mapped).sum()) * pixel_km2, 2),
+            # Share of the corridor where radar could not judge at all.
+            "corridor_not_mapped_by_radar_percent": round(
+                100 * float((result["not_mapped"] & corridor).sum())
+                / max(int((corridor & mapped).sum()), 1), 1),
             "not_mapped_terrain_percent": round(
-                100 * float((result["terrain"]["any"] & mapped).sum()) / max(int(mapped.sum()), 1), 1),
+                100 * float(result["not_mapped"].sum()) / max(int(mapped.sum()), 1), 1),
             "permanent_water_km2": round(float(result["permanent_water"].sum()) * pixel_km2, 3),
         },
         "settings": settings.__dict__,
@@ -128,8 +214,9 @@ def run_flood_mapping(bbox, flood_date, settings=None, data_dir=None, output_dir
     extent = (bounds.left, bounds.right, bounds.bottom, bounds.top)
     save_quicklook(result, extent, output_dir / "quicklook.png", title)
 
-    print(json.dumps(summary["totals"], indent=2))
-    print(f"Outputs written to {output_dir}")
+    report(f"Finished. Outputs written to {output_dir}")
+    print(json.dumps({k: summary[k] for k in ("totals", "baseline")}, indent=2))
+    print(json.dumps(summary["sentinel2"]["check"], indent=2))
     return summary
 
 
@@ -138,8 +225,16 @@ def main():
     parser.add_argument("--bbox", nargs=4, type=float, required=True,
                         metavar=("WEST", "SOUTH", "EAST", "NORTH"))
     parser.add_argument("--date", required=True, help="Flood date, YYYY-MM-DD")
+    parser.add_argument("--large", action="store_true",
+                        help="Allow a box above the live-run size (slow batch jobs)")
     args = parser.parse_args()
-    run_flood_mapping(tuple(args.bbox), date.fromisoformat(args.date))
+    settings = Settings()
+    area = fetch.bbox_area_km2(args.bbox)
+    if area > settings.max_live_area_km2 and not args.large:
+        sys.exit(f"The box covers {area:.0f} km2. Live runs are limited to "
+                 f"{settings.max_live_area_km2:.0f} km2 so they finish in minutes. "
+                 "Choose a smaller box, or add --large to run slow batch jobs.")
+    run_flood_mapping(tuple(args.bbox), date.fromisoformat(args.date), settings)
 
 
 if __name__ == "__main__":

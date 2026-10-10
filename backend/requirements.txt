@@ -2,13 +2,16 @@
 openeo
 requests
 # Raster and vector processing
-numpy
+# pysheds still calls numpy.in1d, which numpy 2.4 removed
+numpy<2.4
 scipy
 scikit-image
 rasterio
 geopandas
 shapely
 pyproj
+# River network and height above drainage from the DEM
+pysheds
 # Quick-look images
 matplotlib
 # Config and tests

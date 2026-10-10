@@ -51,5 +51,47 @@ class Settings:
     incidence_angle_deg: float = 38.0
     geometry_margin_deg: float = 5.0
 
+    # --- River corridor (from the DEM only) ---
+    # A cell is "river" when at least this much land drains through it.
+    river_min_catchment_km2: float = 10.0
+    # The corridor is all ground less than this height above the nearest
+    # river cell. Flood water and debris travel along the valley floor, so
+    # detections outside the corridor are treated as unrelated change.
+    corridor_max_hand_m: float = 40.0
+    # Inside the corridor the slope limit is relaxed: in a gorge the 30 m DEM
+    # blurs the river bed into the valley walls and makes it look steep.
+    corridor_max_slope_deg: float = 45.0
+
+    # --- Hysteresis ---
+    # Pixels with a weaker change (this fraction of the threshold) are kept
+    # when they touch a confident detection. This follows thin channels.
+    hysteresis_low_fraction: float = 0.6
+
+    # --- Debris rule ---
+    # A VV rise alone is kept only for patches at least this large; smaller
+    # patches must also show a VH rise.
+    debris_large_patch_m2: float = 3000.0
+
+    # --- Pre-event baseline ---
+    # Confidence is multiplied by this where the ground was already changing
+    # between the two images taken before the flood.
+    baseline_confidence_factor: float = 0.5
+
+    # --- Sentinel-2 check ---
+    ndvi_vegetated: float = 0.4       # NDVI above this = vegetated
+    ndvi_drop: float = 0.25           # NDVI fall that counts as vegetation loss
+    ndvi_stable: float = 0.10         # NDVI fall below this = vegetation intact
+    water_index_min: float = 0.0      # MNDWI above this = open water
+    optical_confirm_bonus: float = 0.25
+    optical_disagree_factor: float = 0.6
+    optical_only_confidence: float = 0.5
+    optical_min_patch_m2: float = 3000.0
+
+    # --- Live runs ---
+    # Boxes up to this size are fetched by direct download (minutes). Larger
+    # boxes need batch jobs (much slower) and must be asked for explicitly.
+    max_live_area_km2: float = 400.0
+    parallel_downloads: int = 2       # concurrent requests the free tier allows
+
     # --- Clean-up ---
     min_patch_m2: float = 1000.0     # 10 pixels; smaller patches are speckle

@@ -120,10 +120,14 @@ def pick_sentinel1_pair(bbox, flood_date, settings=None):
         after = [p for p in track_passes if p["date"] > flood_date]
         if not before or not after:
             continue
-        b, a = max(before, key=lambda p: p["start"]), min(after, key=lambda p: p["start"])
+        before.sort(key=lambda p: p["start"])
+        b, a = before[-1], min(after, key=lambda p: p["start"])
+        # The pass before "before", if it covers the area too. Comparing it
+        # with "before" shows how much the area changes without a flood.
+        earlier = [p for p in before[:-1] if coverage(p) >= settings.min_coverage]
         candidates.append({
             "relative_orbit": orbit, "direction": direction,
-            "before": b, "after": a,
+            "before": b, "after": a, "baseline": earlier[-1] if earlier else None,
             "days_before": (flood_date - b["date"]).days,
             "days_after": (a["date"] - flood_date).days,
             "coverage": min(coverage(b), coverage(a)),
@@ -159,6 +163,7 @@ def pick_sentinel1_pair(bbox, flood_date, settings=None):
         "direction": chosen["direction"],
         "before": describe(chosen["before"]),
         "after": describe(chosen["after"]),
+        "baseline": describe(chosen["baseline"]) if chosen["baseline"] else None,
         "days_before": chosen["days_before"],
         "days_after": chosen["days_after"],
         "coverage": round(chosen["coverage"], 3),

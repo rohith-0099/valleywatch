@@ -30,14 +30,17 @@ def save_quicklook(result, extent, path, title):
     fig.colorbar(change, ax=axes[2], shrink=0.5)
 
     axes[3].imshow(result["after_vv_db"], **grey)
-    blocked = np.where(result["terrain"]["any"], 1.0, np.nan)
+    blocked = np.where(result["not_mapped"], 1.0, np.nan)
     axes[3].imshow(blocked, cmap=ListedColormap([MASK_COLOUR]), alpha=0.55,
                    extent=extent, interpolation="nearest")
     for class_id, colour in ((CLASS_DEBRIS, DEBRIS_COLOUR), (CLASS_WATER, WATER_COLOUR)):
         layer = np.where(result["classes"] == class_id, 1.0, np.nan)
         axes[3].imshow(layer, cmap=ListedColormap([colour]), extent=extent,
                        interpolation="nearest")
-    axes[3].set_title("Result on the after image")
+    # Outline of the river corridor, the only place detections are accepted.
+    axes[3].contour(result["corridor"].astype(float), levels=[0.5], colors="#ffe600",
+                    linewidths=0.3, extent=extent, origin="upper")
+    axes[3].set_title("Result on the after image (yellow = river corridor)")
     axes[3].legend(handles=[
         Patch(color=WATER_COLOUR, label="New water (backscatter drop)"),
         Patch(color=DEBRIS_COLOUR, label="Debris (backscatter rise)"),

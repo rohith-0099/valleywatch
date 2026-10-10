@@ -37,7 +37,8 @@ def slope_and_range_slope(dem, pixel_m, direction):
 def terrain_mask(dem, pixel_m, direction, settings):
     """Boolean arrays for pixels that must not be classified.
 
-    Returns a dict with 'steep', 'layover', 'shadow' and their union 'any'.
+    Returns a dict with 'slope' (degrees) and the boolean masks 'steep',
+    'layover', 'shadow', 'blind' (layover or shadow or no DEM) and 'any'.
     """
     slope, range_slope = slope_and_range_slope(dem, pixel_m, direction)
     theta = settings.incidence_angle_deg
@@ -52,5 +53,6 @@ def terrain_mask(dem, pixel_m, direction, settings):
     layover = ndimage.binary_dilation(layover, grow, iterations=2)
     shadow = ndimage.binary_dilation(shadow, grow, iterations=2)
     invalid = ~np.isfinite(dem)
-    return {"steep": steep, "layover": layover, "shadow": shadow,
-            "any": steep | layover | shadow | invalid}
+    blind = layover | shadow | invalid
+    return {"slope": slope, "steep": steep, "layover": layover, "shadow": shadow,
+            "blind": blind, "any": steep | blind}
