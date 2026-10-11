@@ -189,6 +189,13 @@ OpenStreetMap is never used.
 - `backend/valleywatch/`: the pipeline. Uses only the allowed inputs.
 - `backend/validation/`: code that reads reference maps (EMSR927) to check
   results. The pipeline never imports this package.
+- `backend/copilot/`: the copilot and the situation report. Reads a finished
+  run's output files only.
+- `backend/tools/`: the false-alarm scan and the report figure scripts.
+- `backend/api.py`: the web API the dashboard talks to.
+- `backend/tests/`: unit tests.
+- `frontend/`: the map dashboard (Next.js, MapLibre).
+- `docs/`: the written report, its figures and the PDF build script.
 - `FINDINGS.md`: what failed on real data and how it was handled.
 - `projectreffmd/`: problem statement, rules and design notes.
 
