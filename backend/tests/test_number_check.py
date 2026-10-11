@@ -54,3 +54,15 @@ def test_misspelt_placeholder_is_caught_and_level_comes_from_the_result():
     result = {"level": "vehicle", "settlements": [{"name": "A", "buildings": 3}]}
     _, registry = to_slots("list_cut_off_settlements", {"level": None}, result, "en")
     assert "cut_off_vehicle_1" in registry
+
+
+def test_units_come_from_the_fact_name():
+    _, registry = to_slots("get_overview", {}, {"flooded_area_km2": 3.5, "percent_of_box": 12.0,
+                                                "road_km": 4.25, "bridges_hit": 0}, "en")
+    assert registry == {"flooded_area_km2": "3.5 km²", "percent_of_box": "12%",
+                        "road_km": "4.25 km", "bridges_hit": "0"}
+
+
+def test_empty_list_says_none_in_the_report_language():
+    assert to_slots("list_hit_bridges", {}, {"bridges": []}, "en")[1] == {"bridge_list": "none"}
+    assert to_slots("list_hit_bridges", {}, {"bridges": []}, "ne")[1] == {"bridge_list": "कुनै छैन"}
